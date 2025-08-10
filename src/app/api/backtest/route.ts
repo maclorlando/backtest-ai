@@ -8,7 +8,18 @@ const schema = z.object({
   assets: z
     .array(
       z.object({
-        id: z.enum(["bitcoin", "ethereum", "solana", "usd-coin", "tether"]) as z.ZodType<AssetId>,
+        id: z.enum([
+          "bitcoin",
+          "ethereum",
+          "solana",
+          "usd-coin",
+          "tether",
+          "pepe",
+          "polkadot",
+          "aave",
+          "chainlink",
+          "fartcoin",
+        ]) as z.ZodType<AssetId>,
         allocation: z.number().min(0).max(1),
       })
     )

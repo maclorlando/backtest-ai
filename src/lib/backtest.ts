@@ -25,12 +25,9 @@ function interpolateLastKnown(
   for (const d of timeline) {
     const price = dateToPrice.get(d);
     if (price != null) last = price;
+    // Forward-fill only. Before the first known price, keep NaN to signal "no data yet".
     out.push(last ?? NaN);
   }
-  // Forward/back fill edge NaNs with first known price
-  let firstKnown = out.find((x) => !Number.isNaN(x));
-  if (firstKnown == null) firstKnown = NaN;
-  for (let i = 0; i < out.length; i++) if (Number.isNaN(out[i])) out[i] = firstKnown;
   return out;
 }
 
@@ -92,9 +89,48 @@ export function runBacktest(
   priceSeries: Record<string, PricePoint[]>
 ): BacktestResponse {
   const timeline = alignTimeline(priceSeries);
+
+  // Integrity tracking
+  const integrityIssues: string[] = [];
+  const assetHadAnyPrice: Record<string, boolean> = {};
   const perAssetPrices: Record<string, number[]> = {};
   for (const [id, series] of Object.entries(priceSeries)) {
-    perAssetPrices[id] = interpolateLastKnown(series, timeline);
+    const interpolated = interpolateLastKnown(series, timeline);
+    perAssetPrices[id] = interpolated;
+    assetHadAnyPrice[id] = series.length > 0;
+    const missingPoints = interpolated.filter((x) => Number.isNaN(x)).length;
+    if (!assetHadAnyPrice[id]) {
+      integrityIssues.push(`No price data for ${id} in selected range`);
+    } else if (missingPoints > 0) {
+      integrityIssues.push(`Missing price points filled for ${id}: ${missingPoints}`);
+    }
+  }
+
+  // If timeline is empty, return a minimal response with degraded integrity
+  if (timeline.length === 0) {
+    integrityIssues.push("No price data available for any asset in selected range");
+    const initialCapital = req.initialCapital ?? 100;
+    return {
+      series: { timeline: [], portfolio: [], perAssetValues: {} },
+      metrics: {
+        startDate: req.startDate,
+        endDate: req.endDate,
+        tradingDays: 0,
+        initialCapital,
+        finalValue: initialCapital,
+        cumulativeReturnPct: 0,
+        cagrPct: 0,
+        volatilityPct: 0,
+        sharpe: null,
+        maxDrawdownPct: 0,
+        bestDayPct: 0,
+        worstDayPct: 0,
+      },
+      // extra fields for UI (not part of BacktestResponse interface)
+      // @ts-ignore
+      risk: { perAssetVolatilityPct: {}, riskReward: null },
+      integrity: { score: Math.max(0, 100 - integrityIssues.length * 15), issues: integrityIssues },
+    } as unknown as BacktestResponse;
   }
 
   const initialCapital = req.initialCapital ?? 100;
@@ -107,10 +143,27 @@ export function runBacktest(
     Object.entries(perAssetPrices).map(([id, prices]) => [id, prices[0]])
   );
   const units: Record<string, number> = {};
+  const pendingCashByAsset: Record<string, number> = {};
+  const firstValidIndex: Record<string, number> = {};
+  for (const [id, prices] of Object.entries(perAssetPrices)) {
+    let idx = -1;
+    for (let i = 0; i < prices.length; i++) {
+      const p = prices[i];
+      if (Number.isFinite(p) && p > 0) {
+        idx = i; break;
+      }
+    }
+    firstValidIndex[id] = idx;
+  }
   for (const a of req.assets) {
     const allocValue = initialCapital * a.allocation;
     const p0 = firstPrices[a.id];
-    units[a.id] = p0 > 0 ? allocValue / p0 : 0;
+    if (Number.isFinite(p0) && p0 > 0 && (firstValidIndex[a.id] ?? -1) <= 0) {
+      units[a.id] = allocValue / (p0 as number);
+    } else {
+      units[a.id] = 0;
+      pendingCashByAsset[a.id] = (pendingCashByAsset[a.id] ?? 0) + allocValue;
+    }
   }
 
   const portfolioValues: number[] = [];
@@ -124,10 +177,28 @@ export function runBacktest(
     req.assets.map((a) => [a.id, [] as number[]])
   );
 
+  function convertPendingIfAvailable(index: number) {
+    for (const a of req.assets) {
+      const cash = pendingCashByAsset[a.id] ?? 0;
+      if (cash > 0) {
+        const p = perAssetPrices[a.id][index];
+        if (Number.isFinite(p) && p > 0) {
+          units[a.id] = cash / p;
+          pendingCashByAsset[a.id] = 0;
+        }
+      }
+    }
+  }
+
   function valueAt(index: number): number {
     let v = 0;
-    for (const a of req.assets) v += units[a.id] * perAssetPrices[a.id][index];
-    return v;
+    for (const a of req.assets) {
+      const p = perAssetPrices[a.id][index];
+      const price = Number.isFinite(p) && p > 0 ? p : 0;
+      v += units[a.id] * price;
+    }
+    const cashSum = Object.values(pendingCashByAsset).reduce((s, c) => s + (c || 0), 0);
+    return v + cashSum;
   }
 
   function maybeRebalance(index: number) {
@@ -158,7 +229,10 @@ export function runBacktest(
       // no-op loop; we compute total via pricesNow below
     }
     const pricesNow: Record<string, number> = Object.fromEntries(
-      req.assets.map((a) => [a.id, perAssetPrices[a.id][index]])
+      req.assets.map((a) => {
+        const p = perAssetPrices[a.id][index];
+        return [a.id, Number.isFinite(p) && p > 0 ? p : 0];
+      })
     );
     const total = Object.entries(units).reduce(
       (sum, [id, u]) => sum + u * pricesNow[id],
@@ -171,12 +245,18 @@ export function runBacktest(
     }
   }
 
+  const cashSeries: number[] = [];
   for (let i = 0; i < timeline.length; i++) {
+    // Convert any pending cash for assets that become available now
+    convertPendingIfAvailable(i);
     maybeRebalance(i);
+    const cashNow = Object.values(pendingCashByAsset).reduce((s, c) => s + (c || 0), 0);
     const v = valueAt(i);
+    cashSeries.push(cashNow);
     portfolioValues.push(v);
     for (const a of req.assets) {
-      const price = perAssetPrices[a.id][i];
+      const p = perAssetPrices[a.id][i];
+      const price = Number.isFinite(p) && p > 0 ? p : 0;
       const value = units[a.id] * price;
       perAssetValues[a.id].push(value);
       perAssetPricesOut[a.id].push(price);
@@ -190,12 +270,33 @@ export function runBacktest(
     req.riskFreeRatePct ?? 0
   );
 
+  // Per-asset volatility (annualized)
+  const perAssetVolatilityPct: Record<string, number> = {};
+  for (const a of req.assets) {
+    const prices = perAssetPricesOut[a.id];
+    const dailyReturns: number[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      const p0 = prices[i - 1];
+      const p1 = prices[i];
+      if (p0 > 0 && p1 > 0) dailyReturns.push(p1 / p0 - 1);
+    }
+    const mean = dailyReturns.reduce((s, r) => s + r, 0) / Math.max(1, dailyReturns.length);
+    const variance =
+      dailyReturns.reduce((s, r) => s + Math.pow(r - mean, 2), 0) / Math.max(1, dailyReturns.length);
+    const stdDaily = Math.sqrt(variance);
+    perAssetVolatilityPct[a.id] = stdDaily * Math.sqrt(252) * 100;
+  }
+
+  const riskReward = metrics.volatilityPct > 0 ? metrics.cagrPct / metrics.volatilityPct : null;
+
   // Integrity checks
-  const integrityIssues: string[] = [];
   // weights sum approx 1
   for (let i = 0; i < timeline.length; i++) {
     let sum = 0;
     for (const a of req.assets) sum += perAssetWeightsOut[a.id][i] ?? 0;
+    const v = portfolioValues[i] || 0;
+    const cashW = v > 0 ? (cashSeries[i] || 0) / v : 0;
+    sum += cashW;
     if (Math.abs(sum - 1) > 1e-3) {
       integrityIssues.push(`Weights not summing to 1 at ${timeline[i]}: ${sum.toFixed(4)}`);
       break;
@@ -204,8 +305,7 @@ export function runBacktest(
   // prices positive
   for (const a of req.assets) {
     if (perAssetPricesOut[a.id].some((p) => !(p > 0))) {
-      integrityIssues.push(`Non-positive prices detected for ${a.id}`);
-      break;
+      integrityIssues.push(`Non-positive or missing prices detected for ${a.id}`);
     }
   }
   // value equals sum of per-asset values
@@ -227,7 +327,8 @@ export function runBacktest(
       perAssetWeights: perAssetWeightsOut,
     },
     metrics,
-    // @ts-expect-error extra field for UI
+    // @ts-expect-error extra fields for UI
+    risk: { perAssetVolatilityPct, riskReward },
     integrity: { score: integrityScore, issues: integrityIssues },
   };
 }

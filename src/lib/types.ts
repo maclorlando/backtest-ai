@@ -3,7 +3,12 @@ export type AssetId =
   | "ethereum"
   | "solana"
   | "usd-coin"
-  | "tether";
+  | "tether"
+  | "pepe"
+  | "polkadot"
+  | "aave"
+  | "chainlink"
+  | "fartcoin";
 
 export interface PortfolioAsset {
   id: AssetId;
@@ -71,6 +76,11 @@ export const ASSET_ID_TO_SYMBOL: Record<AssetId, string> = {
   solana: "SOL",
   "usd-coin": "USDC",
   tether: "USDT",
+  pepe: "PEPE",
+  polkadot: "DOT",
+  aave: "AAVE",
+  chainlink: "LINK",
+  fartcoin: "FART",
 };
 
 export const SYMBOL_TO_ASSET_ID: Record<string, AssetId> = {
@@ -79,6 +89,11 @@ export const SYMBOL_TO_ASSET_ID: Record<string, AssetId> = {
   SOL: "solana",
   USDC: "usd-coin",
   USDT: "tether",
+  PEPE: "pepe",
+  DOT: "polkadot",
+  AAVE: "aave",
+  LINK: "chainlink",
+  FART: "fartcoin",
 };
 
 

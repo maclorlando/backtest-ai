@@ -22,8 +22,9 @@
 body {
   color: rgb(var(--fg));
   background: rgb(var(--bg));
-  font-family: var(--font-geist-sans), system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+  font-family: "IBM Plex Sans", Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
     "Apple Color Emoji", "Segoe UI Emoji";
+  font-size: 13px;
 }
 
 .header-toggle {
@@ -35,6 +36,10 @@ body {
 .saved-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .saved-card { cursor: pointer; }
 .saved-card:hover { transform: translateY(-2px); }
+
+/* Improve Mantine Select dropdown sizing for readability */
+.mantine-Select-dropdown { min-width: 260px; }
+.mantine-Select-option { padding-top: 6px; padding-bottom: 6px; }
 
 .card {
   border: 1px solid rgb(var(--border));

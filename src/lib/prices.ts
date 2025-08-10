@@ -49,6 +49,10 @@ async function fetchBinanceDailyPrices(
     bitcoin: "BTCUSDT",
     ethereum: "ETHUSDT",
     solana: "SOLUSDT",
+    polkadot: "DOTUSDT",
+    aave: "AAVEUSDT",
+    chainlink: "LINKUSDT",
+    pepe: "PEPEUSDT",
   };
   const symbol = symbolMap[assetId];
   if (!symbol) return [];
@@ -106,6 +110,11 @@ async function fetchCoinPaprikaDailyPrices(
     solana: "sol-solana",
     "usd-coin": "usdc-usd-coin",
     tether: "usdt-tether",
+    pepe: "pepe-pepe",
+    polkadot: "dot-polkadot",
+    aave: "aave-aave",
+    chainlink: "link-chainlink",
+    fartcoin: "fart-fartcoin",
   };
   const paprikaId = idMap[assetId];
   if (!paprikaId) throw new Error(`No CoinPaprika mapping for ${assetId}`);
@@ -192,14 +201,58 @@ export async function fetchPrices(
         return synthesizeStablecoin(startDate, endDate);
       }
       // Try CoinPaprika
-      const paprika = await fetchCoinPaprikaDailyPrices(id, startDate, endDate);
-      return paprika;
+      try {
+        const paprika = await fetchCoinPaprikaDailyPrices(id, startDate, endDate);
+        return paprika;
+      } catch {
+        // If all providers fail, return empty series to avoid crashing the whole request
+        return [];
+      }
     })
   );
 
   const out: PricesByAsset = {};
   unique.forEach((id, i) => (out[id] = results[i]));
   return out;
+}
+
+export async function fetchCoinLogos(ids: AssetId[]): Promise<Record<string, string>> {
+  // Use CoinGecko simple/coin list endpoint via IDs; map to images by a separate fetch for each id
+  const base = process.env.COINGECKO_API_KEY ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (process.env.COINGECKO_API_KEY) headers["x-cg-pro-api-key"] = process.env.COINGECKO_API_KEY!;
+  const res: Record<string, string> = {};
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const r = await fetch(`${base}/coins/${id}`, { headers, cache: "force-cache" });
+        if (!r.ok) return;
+        const data = await r.json();
+        const url = data?.image?.small || data?.image?.thumb;
+        if (url) res[id] = url;
+      } catch {}
+    })
+  );
+  return res;
+}
+
+export async function fetchCurrentPricesUSD(ids: AssetId[]): Promise<Record<string, number>> {
+  const base = process.env.COINGECKO_API_KEY ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
+  const headers: Record<string, string> = { accept: "application/json" };
+  if (process.env.COINGECKO_API_KEY) headers["x-cg-pro-api-key"] = process.env.COINGECKO_API_KEY!;
+  const result: Record<string, number> = {};
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const r = await fetch(`${base}/simple/price?ids=${id}&vs_currencies=usd`, { headers, cache: "no-store" });
+        if (!r.ok) return;
+        const data = await r.json();
+        const usd = Number(data?.[id]?.usd);
+        if (Number.isFinite(usd)) result[id] = usd;
+      } catch {}
+    })
+  );
+  return result;
 }
 
 

@@ -1,8 +1,12 @@
 "use client";
 import type { Metadata } from "next";
+import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { useEffect, useState } from "react";
+import { MantineProvider, createTheme } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,7 +34,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeWrapper>{children}</ThemeWrapper>
+        <MantineProvider defaultColorScheme="dark" theme={quantTheme}>
+          <Notifications position="top-center" />
+          <ThemeWrapper>{children}</ThemeWrapper>
+        </MantineProvider>
       </body>
     </html>
   );
@@ -40,15 +47,10 @@ function ThemeWrapper({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const t = (typeof window !== "undefined" && window.sessionStorage.getItem("bt_theme")) || "dark";
     setTheme(t);
-    if (t === "light") {
-      document.documentElement.classList.remove("dark");
-    } else {
-      document.documentElement.classList.add("dark");
-    }
+    document.documentElement.classList.toggle("dark", t !== "light");
     const handler = (e: StorageEvent) => {
       if (e.key === "bt_theme" && e.newValue) {
-        if (e.newValue === "light") document.documentElement.classList.remove("dark");
-        else document.documentElement.classList.add("dark");
+        document.documentElement.classList.toggle("dark", e.newValue !== "light");
       }
     };
     window.addEventListener("storage", handler);
@@ -56,3 +58,13 @@ function ThemeWrapper({ children }: { children: React.ReactNode }) {
   }, []);
   return <>{children}</>;
 }
+
+const quantTheme = createTheme({
+  fontFamily: "IBM Plex Sans, Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
+  primaryColor: "blue",
+  defaultRadius: "md",
+  headings: { fontFamily: "IBM Plex Sans, Inter, system-ui, sans-serif" },
+  colors: {
+    blue: ["#e8f1ff", "#d3e4ff", "#a6c7ff", "#79a9ff", "#4b8bff", "#1e6dff", "#1656cc", "#0f3f99", "#072766", "#011233"],
+  },
+});
