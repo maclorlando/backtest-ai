@@ -7,17 +7,15 @@ import type { AssetId, PricesByAsset, PricePoint } from "./types";
 async function fetchCoingeckoDailyPrices(
   assetId: AssetId,
   from: Date,
-  to: Date
+  to: Date,
+  apiKey?: string
 ): Promise<PricePoint[]> {
-  // Prefer unauthenticated endpoint to avoid 401. We'll request a large window and filter locally.
-  // If a COINGECKO_API_KEY is set, use the pro API base with header.
-  const apiKey = process.env.COINGECKO_API_KEY;
-  const base = apiKey ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  // Use market_chart with 'days=max' for simplicity, then filter between from/to.
+  const key = apiKey || process.env.COINGECKO_API_KEY;
+  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const url = `${base}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
 
   const headers: Record<string, string> = { accept: "application/json" };
-  if (apiKey) headers["x-cg-pro-api-key"] = apiKey;
+  if (key) headers["x-cg-pro-api-key"] = key;
 
   const res = await fetch(url, { headers, cache: "no-store" });
   if (!res.ok) {
@@ -66,18 +64,18 @@ async function fetchBinanceDailyPrices(
     const res = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
     if (!res.ok) throw new Error(`Binance ${assetId}: ${res.status}`);
     const data = (await res.json()) as unknown as Array<[
-      number, // open time ms
-      string, // open
-      string, // high
-      string, // low
-      string, // close
-      string, // volume
-      number, // close time
-      string, // quote asset volume
-      number, // number of trades
-      string, // taker buy base asset volume
-      string, // taker buy quote asset volume
-      string // ignore
+      number,
+      string,
+      string,
+      string,
+      string,
+      string,
+      number,
+      string,
+      number,
+      string,
+      string,
+      string
     ]>;
     if (!Array.isArray(data) || data.length === 0) break;
     for (const row of data) {
@@ -174,17 +172,19 @@ function synthesizeStablecoin(from: Date, to: Date): PricePoint[] {
 export async function fetchPrices(
   assetIds: AssetId[],
   start: string,
-  end: string
+  end: string,
+  opts?: { coingeckoApiKey?: string }
 ): Promise<PricesByAsset> {
   const startDate = new Date(start);
   const endDate = new Date(end);
   const unique = Array.from(new Set(assetIds)).filter(Boolean);
+  const apiKey = opts?.coingeckoApiKey;
 
   const results = await Promise.all(
     unique.map(async (id) => {
       // Try CoinGecko (with or without key)
       try {
-        const cg = await fetchCoingeckoDailyPrices(id, startDate, endDate);
+        const cg = await fetchCoingeckoDailyPrices(id, startDate, endDate, apiKey);
         if (cg.length > 0) return cg;
       } catch {
         // swallow and try fallback
@@ -216,11 +216,11 @@ export async function fetchPrices(
   return out;
 }
 
-export async function fetchCoinLogos(ids: AssetId[]): Promise<Record<string, string>> {
-  // Use CoinGecko simple/coin list endpoint via IDs; map to images by a separate fetch for each id
-  const base = process.env.COINGECKO_API_KEY ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
+export async function fetchCoinLogos(ids: AssetId[], apiKey?: string): Promise<Record<string, string>> {
+  const key = apiKey || process.env.COINGECKO_API_KEY;
+  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
-  if (process.env.COINGECKO_API_KEY) headers["x-cg-pro-api-key"] = process.env.COINGECKO_API_KEY!;
+  if (key) headers["x-cg-pro-api-key"] = key;
   const res: Record<string, string> = {};
   await Promise.all(
     ids.map(async (id) => {
@@ -236,10 +236,11 @@ export async function fetchCoinLogos(ids: AssetId[]): Promise<Record<string, str
   return res;
 }
 
-export async function fetchCurrentPricesUSD(ids: AssetId[]): Promise<Record<string, number>> {
-  const base = process.env.COINGECKO_API_KEY ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
+export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Promise<Record<string, number>> {
+  const key = apiKey || process.env.COINGECKO_API_KEY;
+  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
-  if (process.env.COINGECKO_API_KEY) headers["x-cg-pro-api-key"] = process.env.COINGECKO_API_KEY!;
+  if (key) headers["x-cg-pro-api-key"] = key;
   const result: Record<string, number> = {};
   await Promise.all(
     ids.map(async (id) => {

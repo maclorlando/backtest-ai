@@ -1,5 +1,6 @@
+const isVitest = !!process.env.VITEST;
 const config = {
-  plugins: ["@tailwindcss/postcss"],
+  plugins: isVitest ? [] : [require("@tailwindcss/postcss")],
 };
 
 export default config;

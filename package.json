@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run --environment node"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -20,7 +21,9 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "recharts": "^3.1.2",
-    "zod": "^4.0.16"
+    "zod": "^4.0.16",
+    "viem": "^2.21.30",
+    "@bgd-labs/aave-address-book": "^4.26.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
@@ -31,6 +34,8 @@
     "eslint": "^9",
     "eslint-config-next": "15.4.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9",
+    "@types/jest": "^29.5.12"
   }
 }
