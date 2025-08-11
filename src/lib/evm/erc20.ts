@@ -1,3 +1,4 @@
+
 import { Address, PublicClient, erc20Abi, formatUnits } from "viem";
 
 export async function readErc20Metadata(client: PublicClient, token: Address) {

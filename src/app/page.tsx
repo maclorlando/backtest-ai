@@ -285,10 +285,10 @@ export default function Home() {
   }, [result, initialCapital, allocations]);
 
   return (
-    <main className="mx-auto max-w-6xl p-6 space-y-6">
+    <main className="space-y-6">
       <Card padding="lg" shadow="sm" radius="md" withBorder>
         <Group justify="space-between" align="center">
-          <Title order={3}>Backtest AI — Crypto Portfolio Backtester</Title>
+          <Title order={3}>Crypto Portfolio Backtester</Title>
           <Group>
             <ActionIcon 
               variant="light" 
