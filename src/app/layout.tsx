@@ -9,6 +9,7 @@ import { MantineProvider, createTheme } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import Navigation from "@/components/Navigation";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { AppProvider } from "@/lib/context/AppContext";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -39,12 +40,14 @@ export default function RootLayout({
         <MantineProvider defaultColorScheme="dark" theme={quantTheme}>
           <Notifications position="top-center" />
           <ThemeWrapper>
-            <ErrorBoundary>
-              <div className="mx-auto max-w-6xl p-6">
-                <Navigation />
-                {children}
-              </div>
-            </ErrorBoundary>
+            <AppProvider>
+              <ErrorBoundary>
+                <div className="mx-auto max-w-6xl p-6">
+                  <Navigation />
+                  {children}
+                </div>
+              </ErrorBoundary>
+            </AppProvider>
           </ThemeWrapper>
         </MantineProvider>
       </body>

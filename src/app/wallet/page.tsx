@@ -1,26 +1,36 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Card, Text, Button, TextInput, Group, Select, Table, Badge, Grid, ActionIcon, Tooltip, Divider } from "@mantine/core";
+import { Card, Text, Button, TextInput, Group, Select, Table, Badge, Grid, ActionIcon, Tooltip, Divider, Modal, Stack, PasswordInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconRefresh, IconPlus, IconTrash, IconCopy, IconEye, IconEyeOff, IconWallet, IconKey } from "@tabler/icons-react";
+import { IconRefresh, IconPlus, IconTrash, IconCopy, IconEye, IconEyeOff, IconWallet, IconKey, IconDownload, IconUpload } from "@tabler/icons-react";
 import { encryptSecret, decryptSecret } from "@/lib/wallet/crypto";
 import { loadWallet, saveWallet, clearWallet, loadTrackedTokens, saveTrackedTokens, type TrackedToken } from "@/lib/wallet/storage";
-import { createRandomPrivateKey, buildPublicClient, buildWalletClient } from "@/lib/wallet/viem";
+import { createRandomPrivateKey, buildPublicClient, buildPublicClientWithFallback, buildWalletClient } from "@/lib/wallet/viem";
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { Address, formatEther } from "viem";
 import { readErc20Balance, readErc20Metadata } from "@/lib/evm/erc20";
 import { fetchCurrentPricesUSD } from "@/lib/prices";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation } from "@/lib/utils/errorHandling";
+import { useApp } from "@/lib/context/AppContext";
 
 export default function WalletPage() {
-  const [chainId, setChainId] = useState<number>(11155111);
-  const [password, setPassword] = useState("");
+  const { currentNetwork } = useApp();
+  const chainId = currentNetwork;
   const [unlockedPk, setUnlockedPk] = useState<`0x${string}` | null>(null);
   const [address, setAddress] = useState<string>("");
   const [tracked, setTracked] = useState<TrackedToken[]>([]);
   const [balances, setBalances] = useState<{ native: string; tokens: Array<{ token: TrackedToken; value: number; raw: bigint }>; usd: number; perTokenUsd: Record<string, number> }>({ native: "0", tokens: [], usd: 0, perTokenUsd: {} });
   const [showPrivateKey, setShowPrivateKey] = useState(false);
   const [loading, setLoading] = useState(false);
+  
+  // Modal states
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showUnlockModal, setShowUnlockModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [createPassword, setCreatePassword] = useState("");
+  const [unlockPassword, setUnlockPassword] = useState("");
+  const [importPrivateKey, setImportPrivateKey] = useState("");
+  const [importPassword, setImportPassword] = useState("");
 
   const chain = CHAINS[chainId];
   const rpc = DEFAULT_RPC_BY_CHAIN[chainId];
@@ -37,7 +47,7 @@ export default function WalletPage() {
   async function createWalletHandler() {
     try {
       setLoading(true);
-      if (!password) {
+      if (!createPassword) {
         showErrorNotification(
           new Error("Please enter a password first"),
           "Password Required"
@@ -48,13 +58,20 @@ export default function WalletPage() {
       const { generateWallet } = await import("@/lib/wallet/crypto");
       const wallet = await generateWallet();
       const { encryptSecret } = await import("@/lib/wallet/crypto");
-      const encrypted = await encryptSecret(wallet.privateKey, password);
-      const walletData = { address: wallet.address, encrypted };
+      const encrypted = await encryptSecret(wallet.privateKey, createPassword);
+      const walletData = { 
+        type: "pk" as const, 
+        address: wallet.address, 
+        encrypted, 
+        createdAt: Date.now() 
+      };
       
       saveWallet(walletData);
       setAddress(wallet.address);
       setUnlockedPk(wallet.privateKey);
       setShowPrivateKey(true);
+      setShowCreateModal(false);
+      setCreatePassword("");
       
       showSuccessNotification(
         "Wallet created successfully! Make sure to save your private key securely.",
@@ -70,38 +87,51 @@ export default function WalletPage() {
     }
   }
 
-  async function recoverWalletFromPrivateKey(pkHex: string) {
+  async function importWallet() {
     try {
       setLoading(true);
-      if (!password) {
+      if (!importPrivateKey || !importPassword) {
         showErrorNotification(
-          new Error("Please enter a password first"),
-          "Password Required"
+          new Error("Please enter both private key and password"),
+          "Input Required"
         );
         return;
       }
       
+      // Validate private key format
+      if (!importPrivateKey.startsWith("0x") || importPrivateKey.length !== 66) {
+        throw new Error("Invalid private key format");
+      }
+      
       const { privateKeyToAccount } = await import("viem/accounts");
-      const account = privateKeyToAccount(pkHex as `0x${string}`);
+      const account = privateKeyToAccount(importPrivateKey as `0x${string}`);
       
       const { encryptSecret } = await import("@/lib/wallet/crypto");
-      const encrypted = await encryptSecret(pkHex as `0x${string}`, password);
-      const walletData = { address: account.address, encrypted };
+      const encrypted = await encryptSecret(importPrivateKey as `0x${string}`, importPassword);
+      const walletData = { 
+        type: "pk" as const, 
+        address: account.address, 
+        encrypted, 
+        createdAt: Date.now() 
+      };
       
       saveWallet(walletData);
       setAddress(account.address);
-      setUnlockedPk(pkHex as `0x${string}`);
+      setUnlockedPk(importPrivateKey as `0x${string}`);
       setShowPrivateKey(true);
+      setShowImportModal(false);
+      setImportPrivateKey("");
+      setImportPassword("");
       
       showSuccessNotification(
-        "Wallet recovered successfully!",
-        "Wallet Recovered"
+        "Wallet imported successfully!",
+        "Wallet Imported"
       );
       
-      // Automatically refresh balances after recovering wallet
+      // Automatically refresh balances after importing wallet
       setTimeout(() => refreshBalances(), 500);
     } catch (error) {
-      showErrorNotification(error, "Failed to recover wallet");
+      showErrorNotification(error, "Failed to import wallet");
     } finally {
       setLoading(false);
     }
@@ -113,13 +143,13 @@ export default function WalletPage() {
       const wallet = loadWallet();
       if (!wallet) {
         showErrorNotification(
-          new Error("No wallet found. Please create or recover a wallet first."),
+          new Error("No wallet found. Please create or import a wallet first."),
           "No Wallet Found"
         );
         return;
       }
       
-      if (!password) {
+      if (!unlockPassword) {
         showErrorNotification(
           new Error("Please enter a password first"),
           "Password Required"
@@ -128,13 +158,15 @@ export default function WalletPage() {
       }
       
       const { decryptSecret } = await import("@/lib/wallet/crypto");
-      const pk = (await decryptSecret(wallet.encrypted, password)) as `0x${string}`;
+      const pk = (await decryptSecret(wallet.encrypted, unlockPassword)) as `0x${string}`;
       const { privateKeyToAccount } = await import("viem/accounts");
       const account = privateKeyToAccount(pk);
       
       setAddress(account.address);
       setUnlockedPk(pk);
       setShowPrivateKey(true);
+      setShowUnlockModal(false);
+      setUnlockPassword("");
       
       showSuccessNotification(
         "Wallet unlocked successfully!",
@@ -152,7 +184,7 @@ export default function WalletPage() {
 
   function lock() {
     setAddress("");
-    setUnlockedPk("");
+    setUnlockedPk(null);
     setShowPrivateKey(false);
     showInfoNotification(
       "Wallet has been locked",
@@ -164,7 +196,7 @@ export default function WalletPage() {
     if (confirm("Are you sure you want to forget this wallet? This will remove it from storage.")) {
       localStorage.removeItem("bt_wallet");
       setAddress("");
-      setUnlockedPk("");
+      setUnlockedPk(null);
       setShowPrivateKey(false);
       showInfoNotification(
         "Wallet has been removed from storage",
@@ -204,7 +236,7 @@ export default function WalletPage() {
     
     try {
       setLoading(true);
-      const pub = buildPublicClient(chain, rpc);
+      const pub = buildPublicClientWithFallback(chain, rpc);
       const metadata = await retryOperation(async () => {
         return await readErc20Metadata(pub, addr as Address);
       }, 3, 1000);
@@ -257,7 +289,7 @@ export default function WalletPage() {
         "Refreshing"
       );
       
-      const pub = buildPublicClient(chain, rpc);
+      const pub = buildPublicClientWithFallback(chain, rpc);
       const addr = address as Address;
       
       // Use retry operation for network calls
@@ -344,16 +376,12 @@ export default function WalletPage() {
       <Card withBorder shadow="sm" padding="lg">
         <Group justify="space-between" align="center">
           <div>
-            <Text size="lg" fw={700}>Wallet Management</Text>
-            <Text size="sm" c="dimmed">Create, manage, and secure your crypto wallet</Text>
+            <Text size="lg" fw={700}>Wallet Manager</Text>
+            <Text size="sm" c="dimmed">Advanced wallet management and configuration</Text>
           </div>
-          <Select
-            label="Network"
-            value={String(chainId)}
-            onChange={(v) => setChainId(Number(v))}
-            data={Object.values(CHAINS).map((c) => ({ value: String(c.id), label: `${c.name}` }))}
-            w={200}
-          />
+          <Text size="sm" c="dimmed">
+            Network: {CHAINS[chainId]?.name || `Chain ${chainId}`}
+          </Text>
         </Group>
       </Card>
 
@@ -361,28 +389,40 @@ export default function WalletPage() {
         <Grid.Col span={{ base: 12, md: 6 }}>
           <Card withBorder shadow="sm" padding="lg">
             <Group justify="space-between" align="center" mb="md">
-              <Text size="md" fw={600}>Create / Recover Wallet</Text>
-              <IconKey size={20} />
+              <Text size="md" fw={600}>Wallet Actions</Text>
+              <IconWallet size={20} />
             </Group>
-            <TextInput 
-              label="Password" 
-              type="password" 
-              value={password} 
-              onChange={(e) => setPassword(e.currentTarget.value)}
-              placeholder="Enter a strong password"
-              mb="md"
-            />
-            <Group>
+            
+            <Stack gap="md">
               <Button 
-                onClick={createWalletHandler} 
-                disabled={!password || loading}
-                loading={loading}
+                variant="filled"
+                onClick={() => setShowCreateModal(true)}
                 leftSection={<IconPlus size={16} />}
+                fullWidth
               >
-                Create New
+                Create New Wallet
               </Button>
-              <RecoverForm onRecover={recoverWalletFromPrivateKey} disabled={!password || loading} />
-            </Group>
+              
+              <Button 
+                variant="light"
+                onClick={() => setShowImportModal(true)}
+                leftSection={<IconUpload size={16} />}
+                fullWidth
+              >
+                Import Wallet
+              </Button>
+              
+              {address && !unlockedPk && (
+                <Button 
+                  variant="light"
+                  onClick={() => setShowUnlockModal(true)}
+                  leftSection={<IconKey size={16} />}
+                  fullWidth
+                >
+                  Unlock Wallet
+                </Button>
+              )}
+            </Stack>
           </Card>
         </Grid.Col>
 
@@ -390,75 +430,80 @@ export default function WalletPage() {
           <Card withBorder shadow="sm" padding="lg">
             <Group justify="space-between" align="center" mb="md">
               <Text size="md" fw={600}>Wallet Status</Text>
-              <IconWallet size={20} />
+              <Badge color={unlockedPk ? "green" : address ? "orange" : "gray"}>
+                {unlockedPk ? "Unlocked" : address ? "Locked" : "No Wallet"}
+              </Badge>
             </Group>
-            <div className="space-y-3">
-              <div>
-                <Text size="xs" c="dimmed">Address</Text>
-                <Group gap="xs">
-                  <Text size="sm" fw={500} style={{ fontFamily: 'monospace' }}>
-                    {address || "—"}
-                  </Text>
-                  {address && (
+            
+            {address ? (
+              <Stack gap="md">
+                <div>
+                  <Text size="xs" c="dimmed" mb={4}>Address</Text>
+                  <Group gap="xs">
+                    <Text size="sm" fw={500} style={{ fontFamily: 'monospace' }}>
+                      {address}
+                    </Text>
                     <Tooltip label="Copy address">
                       <ActionIcon variant="light" size="xs" onClick={copyAddress}>
                         <IconCopy size={14} />
                       </ActionIcon>
                     </Tooltip>
-                  )}
-                </Group>
-              </div>
-              
-              {unlockedPk && (
-                <div>
-                  <Text size="xs" c="dimmed">Private Key</Text>
-                  <Group gap="xs">
-                    <Text size="sm" fw={500} style={{ fontFamily: 'monospace' }}>
-                      {showPrivateKey ? unlockedPk : "••••••••••••••••••••••••••••••••"}
-                    </Text>
-                    <Tooltip label={showPrivateKey ? "Hide private key" : "Show private key"}>
-                      <ActionIcon 
-                        variant="light" 
-                        size="xs" 
-                        onClick={() => setShowPrivateKey(!showPrivateKey)}
-                      >
-                        {showPrivateKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-                      </ActionIcon>
-                    </Tooltip>
-                    <Tooltip label="Copy private key">
-                      <ActionIcon variant="light" size="xs" onClick={copyPrivateKey}>
-                        <IconCopy size={14} />
-                      </ActionIcon>
-                    </Tooltip>
                   </Group>
                 </div>
-              )}
-              
-              <Group mt="md">
-                <Button 
-                  variant="light" 
-                  onClick={unlock} 
-                  disabled={!password || loading}
-                  loading={loading}
-                >
-                  Unlock
-                </Button>
-                <Button 
-                  variant="light" 
-                  onClick={lock} 
-                  disabled={!unlockedPk}
-                >
-                  Lock
-                </Button>
-                <Button 
-                  color="red" 
-                  variant="light" 
-                  onClick={forget}
-                >
-                  Forget
-                </Button>
-              </Group>
-            </div>
+                
+                {unlockedPk && (
+                  <div>
+                    <Text size="xs" c="dimmed" mb={4}>Private Key</Text>
+                    <Group gap="xs">
+                      <Text size="sm" fw={500} style={{ fontFamily: 'monospace' }}>
+                        {showPrivateKey ? unlockedPk : "••••••••••••••••••••••••••••••••"}
+                      </Text>
+                      <Tooltip label={showPrivateKey ? "Hide private key" : "Show private key"}>
+                        <ActionIcon 
+                          variant="light" 
+                          size="xs" 
+                          onClick={() => setShowPrivateKey(!showPrivateKey)}
+                        >
+                          {showPrivateKey ? <IconEyeOff size={14} /> : <IconEye size={14} />}
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Copy private key">
+                        <ActionIcon variant="light" size="xs" onClick={copyPrivateKey}>
+                          <IconCopy size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  </div>
+                )}
+                
+                <Group mt="md">
+                  {unlockedPk && (
+                    <>
+                      <Button 
+                        variant="light" 
+                        color="orange" 
+                        onClick={lock}
+                        size="sm"
+                      >
+                        Lock
+                      </Button>
+                      <Button 
+                        variant="light" 
+                        color="red" 
+                        onClick={forget}
+                        size="sm"
+                      >
+                        Forget
+                      </Button>
+                    </>
+                  )}
+                </Group>
+              </Stack>
+            ) : (
+              <Text size="sm" c="dimmed" ta="center" py="xl">
+                No wallet found. Create a new wallet or import an existing one to get started.
+              </Text>
+            )}
           </Card>
         </Grid.Col>
       </Grid>
@@ -575,6 +620,124 @@ export default function WalletPage() {
           )}
         </div>
       </Card>
+
+      {/* Create Wallet Modal */}
+      <Modal 
+        opened={showCreateModal} 
+        onClose={() => setShowCreateModal(false)}
+        title="Create New Wallet"
+        size="sm"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            Create a new wallet with a secure password. Make sure to save your private key safely.
+          </Text>
+          <PasswordInput
+            label="Password"
+            placeholder="Enter a strong password"
+            value={createPassword}
+            onChange={(e) => setCreatePassword(e.target.value)}
+            required
+          />
+          <Group justify="flex-end" gap="sm">
+            <Button 
+              variant="light" 
+              onClick={() => setShowCreateModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={createWalletHandler}
+              loading={loading}
+              disabled={!createPassword}
+            >
+              Create Wallet
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Unlock Wallet Modal */}
+      <Modal 
+        opened={showUnlockModal} 
+        onClose={() => setShowUnlockModal(false)}
+        title="Unlock Wallet"
+        size="sm"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            Enter your wallet password to unlock it.
+          </Text>
+          <PasswordInput
+            label="Password"
+            placeholder="Enter your wallet password"
+            value={unlockPassword}
+            onChange={(e) => setUnlockPassword(e.target.value)}
+            required
+          />
+          <Group justify="flex-end" gap="sm">
+            <Button 
+              variant="light" 
+              onClick={() => setShowUnlockModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={unlock}
+              loading={loading}
+              disabled={!unlockPassword}
+            >
+              Unlock
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Import Wallet Modal */}
+      <Modal 
+        opened={showImportModal} 
+        onClose={() => setShowImportModal(false)}
+        title="Import Wallet"
+        size="sm"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm" c="dimmed">
+            Import an existing wallet using your private key.
+          </Text>
+          <TextInput
+            label="Private Key"
+            placeholder="0x..."
+            value={importPrivateKey}
+            onChange={(e) => setImportPrivateKey(e.target.value)}
+            required
+          />
+          <PasswordInput
+            label="Password"
+            placeholder="Enter password to encrypt"
+            value={importPassword}
+            onChange={(e) => setImportPassword(e.target.value)}
+            required
+          />
+          <Group justify="flex-end" gap="sm">
+            <Button 
+              variant="light" 
+              onClick={() => setShowImportModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={importWallet}
+              loading={loading}
+              disabled={!importPrivateKey || !importPassword}
+            >
+              Import Wallet
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </main>
   );
 }

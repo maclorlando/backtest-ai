@@ -5,14 +5,17 @@ import { notifications } from "@mantine/notifications";
 import { IconRefresh, IconPlus, IconMinus, IconWallet, IconBuildingBank } from "@tabler/icons-react";
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { getAaveConfig, mapAssetIdToAaveSymbol } from "@/lib/aave/config";
-import { buildPublicClient, buildWalletClient } from "@/lib/wallet/viem";
+import { buildPublicClient, buildPublicClientWithFallback, buildWalletClient } from "@/lib/wallet/viem";
 import { loadWallet } from "@/lib/wallet/storage";
-import { checkAndApproveErc20, supplyToAave } from "@/lib/aave/viem";
-import { showErrorNotification, showSuccessNotification, showInfoNotification } from "@/lib/utils/errorHandling";
-import type { AssetId } from "@/lib/types";
+import { checkAndApproveErc20, supplyToAave, testAaveConnection, getPoolInfo, getUserPositions, supplyAssetWithSDK, borrowAssetWithSDK } from "@/lib/aave/viem";
+import { getSupportedNetworks, fetchAllPoolData } from "@/lib/aave/poolData";
+import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation } from "@/lib/utils/errorHandling";
+import { AaveErrorHandler, parseAaveError, type AaveErrorInfo } from "@/components/AaveErrorHandler";
+import type { AssetId, AavePoolInfo, AaveUserPosition, AaveUserSummary } from "@/lib/types";
 import { Address, formatEther, parseEther } from "viem";
 import { readErc20Balance } from "@/lib/evm/erc20";
 import StatusCard, { StatusType } from "@/components/StatusCard";
+import { useApp } from "@/lib/context/AppContext";
 
 type SavedRecord = {
   allocations: { id: AssetId; allocation: number }[];
@@ -20,44 +23,52 @@ type SavedRecord = {
   periodDays?: number; thresholdPct?: number; initialCapital: number;
 };
 
-type AavePosition = {
-  asset: string;
-  symbol: string;
-  supplied: string;
-  borrowed: string;
-  apy: number;
-  collateral: boolean;
-};
+
 
 export default function AavePage() {
-  const [chainId, setChainId] = useState<number>(11155111);
+  const { currentNetwork } = useApp();
+  const chainId = currentNetwork;
   const [portfolios, setPortfolios] = useState<Record<string, SavedRecord>>({});
   const [selected, setSelected] = useState<string>("");
   const [status, setStatus] = useState<string>("");
   const [statusType, setStatusType] = useState<StatusType>("info");
   const [statusProgress, setStatusProgress] = useState<number | undefined>();
   const [loading, setLoading] = useState(false);
-  const [positions, setPositions] = useState<AavePosition[]>([]);
+  const [positions, setPositions] = useState<AaveUserPosition[]>([]);
+  const [userSummary, setUserSummary] = useState<AaveUserSummary | null>(null);
+  const [poolInfo, setPoolInfo] = useState<AavePoolInfo[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "testing">("disconnected");
   const [supplyAmount, setSupplyAmount] = useState<string>("");
   const [selectedAsset, setSelectedAsset] = useState<string>("");
-  const [walletAddress, setWalletAddress] = useState<string>("");
+  const { currentWallet } = useApp();
+  const walletAddress = currentWallet;
+  const [currentError, setCurrentError] = useState<AaveErrorInfo | null>(null);
 
   const cfg = getAaveConfig(chainId);
   const chain = CHAINS[chainId];
   const rpc = DEFAULT_RPC_BY_CHAIN[chainId];
+  
+  // Get supported mainnet networks for Aave
+  const supportedNetworks = [1, 8453, 42161]; // Ethereum, Base, Arbitrum mainnets
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem("bt_portfolios");
       setPortfolios(raw ? (JSON.parse(raw) as Record<string, SavedRecord>) : {});
     } catch { setPortfolios({}); }
-
-    // Load wallet address
-    const wallet = loadWallet();
-    if (wallet?.address) {
-      setWalletAddress(wallet.address);
-    }
   }, []);
+
+  // Auto-refresh positions when wallet or network changes
+  useEffect(() => {
+    if (walletAddress) {
+      refreshPositions();
+    }
+  }, [walletAddress, chainId]);
+
+  // Auto-fetch network stats when network changes
+  useEffect(() => {
+    getNetworkStats();
+  }, [chainId]);
 
   const selectedCfg: SavedRecord | null = selected ? portfolios[selected] : null;
 
@@ -117,7 +128,7 @@ export default function AavePage() {
     try {
       const { decryptSecret } = await import("@/lib/wallet/crypto");
       const pk = (await decryptSecret(w.encrypted, password)) as `0x${string}`;
-      const pub = buildPublicClient(chain, rpc);
+      const pub = buildPublicClientWithFallback(chain, rpc);
       const wc = buildWalletClient(chain, pk, rpc);
 
       setStatus("Starting deployment process...");
@@ -176,8 +187,111 @@ export default function AavePage() {
     }
   }
 
+  async function testConnection() {
+    try {
+      setConnectionStatus("testing");
+      setLoading(true);
+      showInfoNotification(
+        "Testing connection to Aave...",
+        "Testing"
+      );
+      
+      const isConnected = await retryOperation(
+        () => testAaveConnection(),
+        3, // max retries
+        1000 // delay
+      );
+      
+      if (isConnected) {
+        setConnectionStatus("connected");
+        showSuccessNotification(
+          "Successfully connected to Aave",
+          "Connection Successful"
+        );
+      } else {
+        setConnectionStatus("disconnected");
+        showErrorNotification(
+          new Error("Failed to connect to Aave"),
+          "Connection Failed"
+        );
+      }
+    } catch (error) {
+      setConnectionStatus("disconnected");
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
+      showErrorNotification(error, "Connection Test Failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function getNetworkStats() {
+    try {
+      setLoading(true);
+      showInfoNotification(
+        "Fetching network market statistics...",
+        "Fetching"
+      );
+      
+      // Get basic network stats
+      const poolData = await retryOperation(
+        () => fetchAllPoolData(chainId),
+        3, // max retries
+        1000 // delay
+      );
+      
+      setPoolInfo(poolData);
+      
+      // Calculate network totals
+      const totalSupply = poolData.reduce((sum, pool) => sum + parseFloat(pool.totalSupply), 0);
+      const totalBorrow = poolData.reduce((sum, pool) => sum + parseFloat(pool.totalBorrow), 0);
+      const avgSupplyAPY = poolData.reduce((sum, pool) => sum + pool.supplyAPY, 0) / poolData.length;
+      const avgBorrowAPY = poolData.reduce((sum, pool) => sum + pool.borrowAPY, 0) / poolData.length;
+      
+      showSuccessNotification(
+        `Network: $${totalSupply.toFixed(0)}M supplied, $${totalBorrow.toFixed(0)}M borrowed, ${avgSupplyAPY.toFixed(2)}% avg supply APY`,
+        "Network Stats Updated"
+      );
+    } catch (error) {
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
+      showErrorNotification(error, "Failed to fetch network stats");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchPoolPrices() {
+    try {
+      setLoading(true);
+      showInfoNotification(
+        "Fetching pool prices and information...",
+        "Fetching"
+      );
+      
+      // Use the new market data function to fetch all pool data at once
+      const poolData = await retryOperation(
+        () => fetchAllPoolData(chainId),
+        3, // max retries
+        1000 // delay
+      );
+      
+      setPoolInfo(poolData);
+      showSuccessNotification(
+        `Fetched information for ${poolData.length} pools`,
+        "Pool Data Updated"
+      );
+    } catch (error) {
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
+      showErrorNotification(error, "Failed to fetch pool data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function refreshPositions() {
-    if (!walletAddress || !cfg) return;
+    if (!walletAddress) return;
     
     try {
       setLoading(true);
@@ -186,31 +300,21 @@ export default function AavePage() {
         "Refreshing"
       );
       
-      // Mock positions for demo - in real implementation, this would query Aave contracts
-      const mockPositions: AavePosition[] = [
-        {
-          asset: "USDC",
-          symbol: "USDC",
-          supplied: "1000.00",
-          borrowed: "0.00",
-          apy: 2.5,
-          collateral: true
-        },
-        {
-          asset: "WETH",
-          symbol: "WETH",
-          supplied: "0.00",
-          borrowed: "0.50",
-          apy: 4.2,
-          collateral: false
-        }
-      ];
-      setPositions(mockPositions);
+      const { positions: userPositions, summary } = await retryOperation(
+        () => getUserPositions(chainId, walletAddress as Address),
+        3, // max retries
+        1000 // delay
+      );
+      
+      setPositions(userPositions);
+      setUserSummary(summary);
       showSuccessNotification(
         "Your Aave positions have been refreshed",
         "Positions Updated"
       );
     } catch (error) {
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
       showErrorNotification(error, "Failed to fetch positions");
     } finally {
       setLoading(false);
@@ -218,7 +322,7 @@ export default function AavePage() {
   }
 
   async function supplyAsset() {
-    if (!selectedAsset || !supplyAmount || !cfg) return;
+    if (!selectedAsset || !supplyAmount) return;
     
     const w = loadWallet();
     if (!w) {
@@ -229,6 +333,11 @@ export default function AavePage() {
       return;
     }
 
+    const password = prompt("Enter wallet password to sign");
+    if (!password) {
+      return;
+    }
+
     try {
       setLoading(true);
       showInfoNotification(
@@ -236,9 +345,19 @@ export default function AavePage() {
         "Supply Started"
       );
       
-      // Mock supply action - in real implementation, this would call Aave contracts
-      // Simulate some processing time
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Decrypt wallet and create wallet client
+      const { decryptSecret } = await import("@/lib/wallet/crypto");
+      const pk = (await decryptSecret(w.encrypted, password)) as `0x${string}`;
+      const wc = buildWalletClient(chain, pk, rpc);
+      
+      // Get asset address from config
+      const assetAddress = cfg?.reserves[selectedAsset]?.underlying as Address;
+      if (!assetAddress) {
+        throw new Error(`Asset ${selectedAsset} not found in Aave config`);
+      }
+      
+      // Supply using SDK
+      await supplyAssetWithSDK(wc, chainId, assetAddress, supplyAmount);
       
       showSuccessNotification(
         `Successfully supplied ${supplyAmount} ${selectedAsset} to Aave`,
@@ -246,7 +365,12 @@ export default function AavePage() {
       );
       setSupplyAmount("");
       setSelectedAsset("");
+      
+      // Refresh positions after supply
+      setTimeout(() => refreshPositions(), 2000);
     } catch (error) {
+      const aaveError = parseAaveError(error, { asset: selectedAsset, chainId });
+      setCurrentError(aaveError);
       showErrorNotification(error, "Supply Failed");
     } finally {
       setLoading(false);
@@ -261,14 +385,18 @@ export default function AavePage() {
             <Text size="lg" fw={700}>Aave DeFi Manager</Text>
             <Text size="sm" c="dimmed">Lend, borrow, and manage your DeFi positions</Text>
           </div>
-          <Group>
-            <Select
-              label="Network"
-              value={String(chainId)}
-              onChange={(v) => setChainId(Number(v))}
-              data={Object.values(CHAINS).map((c) => ({ value: String(c.id), label: `${c.name}` }))}
-              w={200}
-            />
+                     <Group>
+            <Text size="sm" c="dimmed">
+              Network: {CHAINS[chainId]?.name || `Chain ${chainId}`}
+            </Text>
+            <Button
+              variant="light"
+              onClick={getNetworkStats}
+              loading={loading}
+              size="sm"
+            >
+              Get Network Stats
+            </Button>
             <Tooltip label="Refresh positions">
               <ActionIcon 
                 variant="light" 
@@ -282,6 +410,21 @@ export default function AavePage() {
           </Group>
         </Group>
       </Card>
+
+      {/* Error Handler */}
+      <AaveErrorHandler
+        error={currentError}
+        onRetry={() => {
+          setCurrentError(null);
+          // Retry the last operation based on context
+          if (connectionStatus === "testing") {
+            testConnection();
+          } else {
+            fetchPoolPrices();
+          }
+        }}
+        onDismiss={() => setCurrentError(null)}
+      />
 
       <Tabs defaultValue="positions">
         <Tabs.List>
@@ -297,53 +440,146 @@ export default function AavePage() {
         </Tabs.List>
 
         <Tabs.Panel value="positions" pt="md">
-          <Card withBorder shadow="sm" padding="lg">
-            <Group justify="space-between" align="center" mb="md">
-              <Text size="md" fw={600}>Your Aave Positions</Text>
-              <Badge color={walletAddress ? "green" : "red"}>
-                {walletAddress ? "Wallet Connected" : "No Wallet"}
-              </Badge>
-            </Group>
-            
-            {positions.length > 0 ? (
-              <Table withTableBorder withColumnBorders>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Asset</Table.Th>
-                    <Table.Th>Supplied</Table.Th>
-                    <Table.Th>Borrowed</Table.Th>
-                    <Table.Th>APY</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {positions.map((pos) => (
-                    <Table.Tr key={pos.asset}>
-                      <Table.Td>
-                        <Group gap="xs">
-                          <Text fw={600}>{pos.symbol}</Text>
-                        </Group>
-                      </Table.Td>
-                      <Table.Td>{pos.supplied}</Table.Td>
-                      <Table.Td>{pos.borrowed}</Table.Td>
-                      <Table.Td>{pos.apy}%</Table.Td>
-                      <Table.Td>
-                        <Badge color={pos.collateral ? "green" : "blue"}>
-                          {pos.collateral ? "Collateral" : "Borrowed"}
-                        </Badge>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            ) : (
-              <Card withBorder shadow="sm" padding="md">
-                <Text size="sm" c="dimmed" ta="center">
-                  No positions found. Connect your wallet and supply assets to get started.
-                </Text>
+          <Grid>
+            <Grid.Col span={12}>
+              <Card withBorder shadow="sm" padding="lg">
+                <Group justify="space-between" align="center" mb="md">
+                  <Text size="md" fw={600}>Your Aave Positions</Text>
+                  <Badge color={walletAddress ? "green" : "red"}>
+                    {walletAddress ? "Wallet Connected" : "No Wallet"}
+                  </Badge>
+                </Group>
+                
+                <Card withBorder shadow="sm" padding="md" mb="md">
+                  <Text size="sm" fw={600} mb="md">Account Summary</Text>
+                  <Grid>
+                    <Grid.Col span={3}>
+                      <Text size="xs" c="dimmed">Total Supplied</Text>
+                      <Text size="sm" fw={600}>
+                        ${userSummary ? userSummary.totalSupplied.toFixed(2) : "0.00"}
+                      </Text>
+                    </Grid.Col>
+                    <Grid.Col span={3}>
+                      <Text size="xs" c="dimmed">Total Borrowed</Text>
+                      <Text size="sm" fw={600}>
+                        ${userSummary ? userSummary.totalBorrowed.toFixed(2) : "0.00"}
+                      </Text>
+                    </Grid.Col>
+                    <Grid.Col span={3}>
+                      <Text size="xs" c="dimmed">Health Factor</Text>
+                      <Text size="sm" fw={600} color={
+                        !userSummary ? "gray" : 
+                        userSummary.healthFactor > 1.5 ? "green" : 
+                        userSummary.healthFactor > 1.1 ? "orange" : "red"
+                      }>
+                        {userSummary ? userSummary.healthFactor.toFixed(2) : "N/A"}
+                      </Text>
+                    </Grid.Col>
+                    <Grid.Col span={3}>
+                      <Text size="xs" c="dimmed">LTV</Text>
+                      <Text size="sm" fw={600}>
+                        {userSummary ? (userSummary.ltv * 100).toFixed(1) : "0.0"}%
+                      </Text>
+                    </Grid.Col>
+                  </Grid>
+                </Card>
+                
+                {positions.length > 0 ? (
+                  <Table withTableBorder withColumnBorders>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Asset</Table.Th>
+                        <Table.Th>Supplied</Table.Th>
+                        <Table.Th>Borrowed</Table.Th>
+                        <Table.Th>Supply APY</Table.Th>
+                        <Table.Th>Borrow APY</Table.Th>
+                        <Table.Th>USD Value</Table.Th>
+                        <Table.Th>Status</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {positions.map((pos) => (
+                        <Table.Tr key={pos.asset}>
+                          <Table.Td>
+                            <Group gap="xs">
+                              <Text fw={600}>{pos.symbol}</Text>
+                            </Group>
+                          </Table.Td>
+                          <Table.Td>{pos.supplied}</Table.Td>
+                          <Table.Td>{pos.borrowed}</Table.Td>
+                          <Table.Td>{pos.supplyAPY}%</Table.Td>
+                          <Table.Td>{pos.borrowAPY}%</Table.Td>
+                          <Table.Td>${pos.usdValue.toFixed(2)}</Table.Td>
+                          <Table.Td>
+                            <Badge color={pos.collateral ? "green" : "blue"}>
+                              {pos.collateral ? "Collateral" : "Borrowed"}
+                            </Badge>
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                ) : (
+                  <Card withBorder shadow="sm" padding="md">
+                    <Text size="sm" c="dimmed" ta="center" mb="md">
+                      No active positions found.
+                    </Text>
+                    <Text size="xs" c="dimmed" ta="center">
+                      {walletAddress 
+                        ? "Supply assets to start earning interest or use them as collateral for borrowing."
+                        : "Connect your wallet to view your Aave positions and start lending/borrowing."
+                      }
+                    </Text>
+                  </Card>
+                )}
               </Card>
-            )}
-          </Card>
+            </Grid.Col>
+            
+            <Grid.Col span={12}>
+              <Card withBorder shadow="sm" padding="lg">
+                <Group justify="space-between" align="center" mb="md">
+                  <Text size="md" fw={600}>Network Pool Information</Text>
+                  <Badge color={poolInfo.length > 0 ? "green" : "gray"}>
+                    {poolInfo.length > 0 ? `${poolInfo.length} pools` : "No data"}
+                  </Badge>
+                </Group>
+                {poolInfo.length > 0 ? (
+                  <Table withTableBorder withColumnBorders>
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>Asset</Table.Th>
+                        <Table.Th>Total Supply</Table.Th>
+                        <Table.Th>Total Borrow</Table.Th>
+                        <Table.Th>Supply APY</Table.Th>
+                        <Table.Th>Borrow APY</Table.Th>
+                        <Table.Th>Utilization</Table.Th>
+                        <Table.Th>Price</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {poolInfo.map((pool) => (
+                        <Table.Tr key={pool.symbol}>
+                          <Table.Td>
+                            <Text fw={600}>{pool.symbol}</Text>
+                          </Table.Td>
+                          <Table.Td>{pool.totalSupply}</Table.Td>
+                          <Table.Td>{pool.totalBorrow}</Table.Td>
+                          <Table.Td>{pool.supplyAPY.toFixed(2)}%</Table.Td>
+                          <Table.Td>{pool.borrowAPY.toFixed(2)}%</Table.Td>
+                          <Table.Td>{pool.utilizationRate.toFixed(1)}%</Table.Td>
+                          <Table.Td>${pool.price.toFixed(4)}</Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                ) : (
+                  <Text size="sm" c="dimmed" ta="center" py="xl">
+                    No pool data available. Click "Get Network Stats" to fetch current market information.
+                  </Text>
+                )}
+              </Card>
+            </Grid.Col>
+          </Grid>
         </Tabs.Panel>
 
         <Tabs.Panel value="deploy" pt="md">
@@ -376,7 +612,7 @@ export default function AavePage() {
                 </Grid>
                 
                 <Text size="sm" fw={600} mt="md" mb="xs">Asset Allocations</Text>
-                <Table withTableBorder withColumnBorders size="xs">
+                <Table withTableBorder withColumnBorders>
                   <Table.Thead>
                     <Table.Tr>
                       <Table.Th>Asset</Table.Th>
@@ -461,7 +697,7 @@ export default function AavePage() {
                   onChange={(v) => setSupplyAmount(String(v || ""))}
                   placeholder="0.00"
                   min={0}
-                  precision={6}
+                  decimalScale={6}
                 />
               </Grid.Col>
             </Grid>

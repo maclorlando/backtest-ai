@@ -3,6 +3,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Card, Group, Text, ActionIcon } from "@mantine/core";
 import { IconChartLine, IconWallet, IconBuildingBank, IconSettings } from "@tabler/icons-react";
+import WalletWidget from "./WalletWidget";
 
 const navItems = [
   {
@@ -56,6 +57,7 @@ export default function Navigation() {
               </Link>
             );
           })}
+          <WalletWidget />
         </Group>
       </Group>
     </Card>

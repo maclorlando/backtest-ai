@@ -80,7 +80,7 @@ export default function StatusCard({
                 color={config.color}
                 size="sm"
                 mt="xs"
-                label={`${Math.round(progress)}%`}
+                children={`${Math.round(progress)}%`}
               />
             )}
           </div>

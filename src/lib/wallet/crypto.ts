@@ -5,6 +5,11 @@ export type EncryptedSecret = {
   cipherTextB64: string;
 };
 
+export type GeneratedWallet = {
+  privateKey: `0x${string}`;
+  address: `0x${string}`;
+};
+
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
@@ -24,6 +29,17 @@ async function deriveKey(password: string, salt: Uint8Array) {
     ["encrypt", "decrypt"]
   );
   return key;
+}
+
+export async function generateWallet(): Promise<GeneratedWallet> {
+  const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+  const privateKey = generatePrivateKey();
+  const account = privateKeyToAccount(privateKey);
+  
+  return {
+    privateKey,
+    address: account.address,
+  };
 }
 
 export async function encryptSecret(secret: string, password: string): Promise<EncryptedSecret> {
