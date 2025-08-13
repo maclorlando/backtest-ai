@@ -71,7 +71,8 @@ export default function Home() {
   // Load logos on mount and when assets change
   useEffect(() => {
     const ids = Array.from(new Set(allocations.map((a) => a.id)));
-    fetchCoinLogos(ids).then(setLogos).catch(() => {});
+    const key = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+    fetchCoinLogos(ids, key).then(setLogos).catch(() => {});
   }, [allocations]);
 
   // Hydration-safe load of saved portfolios from localStorage
@@ -100,8 +101,9 @@ export default function Home() {
       "chainlink",
       "fartcoin",
     ];
-    fetchCoinLogos(allIds).then((res) => setLogos((prev) => ({ ...res, ...prev }))).catch(() => {});
-    fetchCurrentPricesUSD(allIds).then(setSpot).catch(() => {});
+    const key = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+    fetchCoinLogos(allIds, key).then((res) => setLogos((prev) => ({ ...res, ...prev }))).catch(() => {});
+    fetchCurrentPricesUSD(allIds, key).then(setSpot).catch(() => {});
   }, []);
 
   // Initialize dates on client to avoid SSR hydration mismatch due to timezones
@@ -117,9 +119,10 @@ export default function Home() {
     // If we already have a result, reuse it; otherwise call API
     let res = result;
     if (!res) {
+      const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
       const r = await fetch("/api/backtest", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
         body: JSON.stringify({
           assets: allocations,
           startDate: start,
@@ -167,9 +170,10 @@ export default function Home() {
     setError(null);
     setLoading(true);
     try {
+      const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
       const res = await fetch("/api/backtest", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
         body: JSON.stringify({
           assets: allocations,
           startDate: start,
@@ -204,7 +208,7 @@ export default function Home() {
       const entries = Object.entries(saved);
       if (entries.length === 0) return;
       // Normalize to a common timeline using API responses
-      const responses: { name: string; res: BacktestResponse & any }[] = [];
+      const responses: { name: string; res: BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } }[] = [];
       for (const [name, cfg] of entries) {
         const body: BacktestRequest = {
           assets: cfg.allocations,
@@ -213,12 +217,13 @@ export default function Home() {
           rebalance: { mode: cfg.mode, periodDays: cfg.periodDays, thresholdPct: cfg.thresholdPct },
           initialCapital: cfg.initialCapital,
         };
-        const r = await fetch("/api/backtest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-        const data = (await r.json()) as BacktestResponse & any;
-        if (!r.ok) throw new Error(data?.error || "Request failed");
-        responses.push({ name, res: data });
+        const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+        const r = await fetch("/api/backtest", { method: "POST", headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) }, body: JSON.stringify(body) });
+        const data = (await r.json()) as (BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } }) | { error?: string };
+        if (!r.ok) throw new Error((data as { error?: string })?.error || "Request failed");
+        responses.push({ name, res: data as BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } });
       }
-      const allDates = Array.from(new Set(responses.flatMap((x) => x.res.series.portfolio.map((p: any) => p.date)))).sort();
+      const allDates = Array.from(new Set(responses.flatMap((x) => x.res.series.portfolio.map((p) => p.date)))).sort();
       const colorPool = ["#1e90ff", "#22c55e", "#ef4444", "#a855f7", "#f59e0b", "#06b6d4", "#e11d48", "#84cc16"]; // rotate if needed
       const lines: { key: string; name: string; color: string; kpis: { cagrPct: number; volPct: number; maxDdPct: number; rr: number | null } }[] = [];
       const seriesByName: Record<string, Record<string, number>> = {};
@@ -237,7 +242,7 @@ export default function Home() {
           },
         });
         const map: Record<string, number> = {};
-        r.res.series.portfolio.forEach((p: any) => (map[p.date] = p.value));
+        r.res.series.portfolio.forEach((p) => (map[p.date] = p.value));
         seriesByName[key] = map;
       });
       const rows = allDates.map((d) => {
@@ -280,10 +285,10 @@ export default function Home() {
   }, [result, initialCapital, allocations]);
 
   return (
-    <main className="mx-auto max-w-6xl p-6 space-y-6">
+    <main className="space-y-6">
       <Card padding="lg" shadow="sm" radius="md" withBorder>
         <Group justify="space-between" align="center">
-          <Title order={3}>Backtest AI — Crypto Portfolio Backtester</Title>
+          <Title order={3}>Crypto Portfolio Backtester</Title>
           <Group>
             <ActionIcon 
               variant="light" 

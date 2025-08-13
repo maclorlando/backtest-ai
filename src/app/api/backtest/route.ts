@@ -40,10 +40,13 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = schema.parse(body) as BacktestRequest;
 
+    const cgKey = req.headers.get("x-cg-key") || undefined;
+
     const prices = await fetchPrices(
       parsed.assets.map((a) => a.id),
       parsed.startDate,
-      parsed.endDate
+      parsed.endDate,
+      { coingeckoApiKey: cgKey }
     );
 
     const result = runBacktest(parsed, prices);

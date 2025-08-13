@@ -126,9 +126,7 @@ export function runBacktest(
         bestDayPct: 0,
         worstDayPct: 0,
       },
-      // extra fields for UI (not part of BacktestResponse interface)
-      // @ts-ignore
-      risk: { perAssetVolatilityPct: {}, riskReward: null },
+      risk: { perAssetVolatilityPct: {}, riskReward: null } as unknown as { perAssetVolatilityPct: Record<string, number>; riskReward: number | null },
       integrity: { score: Math.max(0, 100 - integrityIssues.length * 15), issues: integrityIssues },
     } as unknown as BacktestResponse;
   }
@@ -225,7 +223,7 @@ export function runBacktest(
     if (!should) return;
 
     // Rebalance: sell all to cash then buy to target weights at current prices
-  for (const _ of req.assets) {
+    for (const _ of req.assets) {
       // no-op loop; we compute total via pricesNow below
     }
     const pricesNow: Record<string, number> = Object.fromEntries(
@@ -327,10 +325,9 @@ export function runBacktest(
       perAssetWeights: perAssetWeightsOut,
     },
     metrics,
-    // @ts-expect-error extra fields for UI
-    risk: { perAssetVolatilityPct, riskReward },
+    risk: { perAssetVolatilityPct, riskReward } as unknown as { perAssetVolatilityPct: Record<string, number>; riskReward: number | null },
     integrity: { score: integrityScore, issues: integrityIssues },
-  };
+  } as unknown as BacktestResponse;
 }
 
 
