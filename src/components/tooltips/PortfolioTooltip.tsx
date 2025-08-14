@@ -11,17 +11,17 @@ export default function PortfolioTooltip({ active, payload, label }: TooltipProp
   const growth = value && invested ? ((value / invested - 1) * 100).toFixed(2) : "";
   const assetItems = payload.filter((p) => (p.dataKey || "").endsWith("_price"));
   return (
-    <div className="tooltip-card">
-      <div className="text-xs text-slate-500 mb-1">{label}</div>
+    <div className="tooltip">
+      <div className="text-xs text-[rgb(var(--fg-tertiary))] mb-1">{label}</div>
       <div className="flex items-center gap-3">
-        <div className="chip">Portfolio</div>
+        <div className="badge">Portfolio</div>
         <div className="font-semibold">{typeof value === "number" ? value.toFixed(2) : value}</div>
       </div>
       <div className="flex items-center gap-3">
-        <div className="chip">Invested</div>
+        <div className="badge">Invested</div>
         <div>{typeof invested === "number" ? invested.toFixed(2) : invested}</div>
       </div>
-      {growth && <div className="text-xs text-slate-500">Growth: {growth}%</div>}
+      {growth && <div className="text-xs text-[rgb(var(--fg-tertiary))]">Growth: {growth}%</div>}
       {assetItems.length > 0 && (
         <div className="mt-2">
           <div className="text-xs font-semibold mb-1">Assets</div>

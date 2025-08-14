@@ -1,18 +1,19 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Card, Text, Button, Select, Tabs, Table, Badge, Group, Grid, NumberInput, ActionIcon, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { IconRefresh, IconPlus, IconMinus, IconWallet, IconBuildingBank } from "@tabler/icons-react";
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { getAaveConfig, mapAssetIdToAaveSymbol } from "@/lib/aave/config";
-import { buildPublicClient, buildWalletClient } from "@/lib/wallet/viem";
+import { buildPublicClient, buildPublicClientWithFallback, buildWalletClient } from "@/lib/wallet/viem";
 import { loadWallet } from "@/lib/wallet/storage";
-import { checkAndApproveErc20, supplyToAave } from "@/lib/aave/viem";
-import { showErrorNotification, showSuccessNotification, showInfoNotification } from "@/lib/utils/errorHandling";
-import type { AssetId } from "@/lib/types";
+import { checkAndApproveErc20, supplyToAave, testAaveConnection, getPoolInfo, getUserPositions, supplyAssetWithSDK, borrowAssetWithSDK } from "@/lib/aave/viem";
+import { getSupportedNetworks, fetchAllPoolData } from "@/lib/aave/poolData";
+import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation } from "@/lib/utils/errorHandling";
+import { AaveErrorHandler, parseAaveError, type AaveErrorInfo } from "@/components/AaveErrorHandler";
+import type { AssetId, AavePoolInfo, AaveUserPosition, AaveUserSummary } from "@/lib/types";
 import { Address, formatEther, parseEther } from "viem";
 import { readErc20Balance } from "@/lib/evm/erc20";
 import StatusCard, { StatusType } from "@/components/StatusCard";
+import { useApp } from "@/lib/context/AppContext";
 
 type SavedRecord = {
   allocations: { id: AssetId; allocation: number }[];
@@ -20,44 +21,56 @@ type SavedRecord = {
   periodDays?: number; thresholdPct?: number; initialCapital: number;
 };
 
-type AavePosition = {
-  asset: string;
-  symbol: string;
-  supplied: string;
-  borrowed: string;
-  apy: number;
-  collateral: boolean;
-};
-
 export default function AavePage() {
-  const [chainId, setChainId] = useState<number>(11155111);
+  const { currentNetwork } = useApp();
+  const chainId = currentNetwork;
   const [portfolios, setPortfolios] = useState<Record<string, SavedRecord>>({});
   const [selected, setSelected] = useState<string>("");
   const [status, setStatus] = useState<string>("");
   const [statusType, setStatusType] = useState<StatusType>("info");
   const [statusProgress, setStatusProgress] = useState<number | undefined>();
   const [loading, setLoading] = useState(false);
-  const [positions, setPositions] = useState<AavePosition[]>([]);
+  const [positions, setPositions] = useState<AaveUserPosition[]>([]);
+  const [userSummary, setUserSummary] = useState<AaveUserSummary | null>(null);
+  const [poolInfo, setPoolInfo] = useState<AavePoolInfo[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "testing">("disconnected");
   const [supplyAmount, setSupplyAmount] = useState<string>("");
   const [selectedAsset, setSelectedAsset] = useState<string>("");
-  const [walletAddress, setWalletAddress] = useState<string>("");
+  const [activeTab, setActiveTab] = useState<"positions" | "deploy" | "supply">("positions");
+  const { currentWallet } = useApp();
+  const walletAddress = currentWallet;
+  const [currentError, setCurrentError] = useState<AaveErrorInfo | null>(null);
 
   const cfg = getAaveConfig(chainId);
   const chain = CHAINS[chainId];
   const rpc = DEFAULT_RPC_BY_CHAIN[chainId];
+  
+  // Get supported mainnet networks for Aave
+  const supportedNetworks = [1, 8453, 42161]; // Ethereum, Base, Arbitrum mainnets
 
   useEffect(() => {
     try {
       const raw = localStorage.getItem("bt_portfolios");
       setPortfolios(raw ? (JSON.parse(raw) as Record<string, SavedRecord>) : {});
     } catch { setPortfolios({}); }
-
-    // Load wallet address
-    const wallet = loadWallet();
-    if (wallet?.address) {
-      setWalletAddress(wallet.address);
-    }
   }, []);
+
+  // Auto-refresh positions when wallet or network changes
+  useEffect(() => {
+    if (walletAddress) {
+      refreshPositions();
+    }
+  }, [walletAddress, chainId]);
+
+  // Auto-fetch network stats when network changes
+  useEffect(() => {
+    getNetworkStats();
+  }, [chainId]);
+
+  // Auto-fetch market data when app loads and network changes
+  useEffect(() => {
+    fetchPoolPrices();
+  }, [chainId]);
 
   const selectedCfg: SavedRecord | null = selected ? portfolios[selected] : null;
 
@@ -117,7 +130,7 @@ export default function AavePage() {
     try {
       const { decryptSecret } = await import("@/lib/wallet/crypto");
       const pk = (await decryptSecret(w.encrypted, password)) as `0x${string}`;
-      const pub = buildPublicClient(chain, rpc);
+      const pub = buildPublicClientWithFallback(chain, rpc);
       const wc = buildWalletClient(chain, pk, rpc);
 
       setStatus("Starting deployment process...");
@@ -176,8 +189,133 @@ export default function AavePage() {
     }
   }
 
+  async function testConnection() {
+    try {
+      setConnectionStatus("testing");
+      setLoading(true);
+      showInfoNotification(
+        "Testing connection to Aave...",
+        "Testing"
+      );
+      
+      const isConnected = await retryOperation(
+        () => testAaveConnection(),
+        3, // max retries
+        1000 // delay
+      );
+      
+      if (isConnected) {
+        setConnectionStatus("connected");
+        showSuccessNotification(
+          "Successfully connected to Aave",
+          "Connection Successful"
+        );
+      } else {
+        setConnectionStatus("disconnected");
+        showErrorNotification(
+          new Error("Failed to connect to Aave"),
+          "Connection Failed"
+        );
+      }
+    } catch (error) {
+      setConnectionStatus("disconnected");
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
+      showErrorNotification(error, "Connection Test Failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function getNetworkStats() {
+    try {
+      setLoading(true);
+      showInfoNotification(
+        "Fetching network market statistics...",
+        "Fetching"
+      );
+      
+      // Get basic network stats
+      const poolData = await retryOperation(
+        () => fetchAllPoolData(chainId),
+        3, // max retries
+        1000 // delay
+      );
+      
+      setPoolInfo(poolData);
+      
+      // Calculate network totals
+      const totalSupply = poolData.reduce((sum, pool) => sum + parseFloat(pool.totalSupply), 0);
+      const totalBorrow = poolData.reduce((sum, pool) => sum + parseFloat(pool.totalBorrow), 0);
+      const avgSupplyAPY = poolData.reduce((sum, pool) => sum + pool.supplyAPY, 0) / poolData.length;
+      const avgBorrowAPY = poolData.reduce((sum, pool) => sum + pool.borrowAPY, 0) / poolData.length;
+      
+      showSuccessNotification(
+        `Network: $${totalSupply.toFixed(0)}M supplied, $${totalBorrow.toFixed(0)}M borrowed, ${avgSupplyAPY.toFixed(2)}% avg supply APY`,
+        "Network Stats Updated"
+      );
+    } catch (error) {
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
+      showErrorNotification(error, "Failed to fetch network stats");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchPoolPrices() {
+    try {
+      setLoading(true);
+      showInfoNotification(
+        `Fetching market data for ${CHAINS[chainId]?.name || `Chain ${chainId}`}...`,
+        "Fetching"
+      );
+      
+      // Use the new market data function to fetch all pool data at once
+      const poolData = await retryOperation(
+        () => fetchAllPoolData(chainId),
+        3, // max retries
+        1000 // delay
+      );
+      
+      console.log("Raw pool data received:", poolData);
+      
+      // Validate the data structure
+      if (poolData && poolData.length > 0) {
+        console.log("First pool data item:", poolData[0]);
+        console.log("APY values check:");
+        poolData.forEach((pool, index) => {
+          console.log(`${pool.symbol}: supplyAPY=${pool.supplyAPY}, borrowAPY=${pool.borrowAPY}, utilizationRate=${pool.utilizationRate}`);
+          console.log(`  - supplyAPY type: ${typeof pool.supplyAPY}, isNaN: ${isNaN(pool.supplyAPY)}`);
+          console.log(`  - borrowAPY type: ${typeof pool.borrowAPY}, isNaN: ${isNaN(pool.borrowAPY)}`);
+          console.log(`  - utilizationRate type: ${typeof pool.utilizationRate}, isNaN: ${isNaN(pool.utilizationRate)}`);
+        });
+      }
+      
+      setPoolInfo(poolData);
+      
+      if (poolData.length > 0) {
+        showSuccessNotification(
+          `Fetched information for ${poolData.length} pools on ${CHAINS[chainId]?.name || `Chain ${chainId}`}`,
+          "Market Data Updated"
+        );
+      } else {
+        showInfoNotification(
+          `No pool data available for ${CHAINS[chainId]?.name || `Chain ${chainId}`}. This network may not support Aave or may be using testnet data.`,
+          "No Data Available"
+        );
+      }
+    } catch (error) {
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
+      showErrorNotification(error, "Failed to fetch pool data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function refreshPositions() {
-    if (!walletAddress || !cfg) return;
+    if (!walletAddress) return;
     
     try {
       setLoading(true);
@@ -186,31 +324,21 @@ export default function AavePage() {
         "Refreshing"
       );
       
-      // Mock positions for demo - in real implementation, this would query Aave contracts
-      const mockPositions: AavePosition[] = [
-        {
-          asset: "USDC",
-          symbol: "USDC",
-          supplied: "1000.00",
-          borrowed: "0.00",
-          apy: 2.5,
-          collateral: true
-        },
-        {
-          asset: "WETH",
-          symbol: "WETH",
-          supplied: "0.00",
-          borrowed: "0.50",
-          apy: 4.2,
-          collateral: false
-        }
-      ];
-      setPositions(mockPositions);
+      const { positions: userPositions, summary } = await retryOperation(
+        () => getUserPositions(chainId, walletAddress as Address),
+        3, // max retries
+        1000 // delay
+      );
+      
+      setPositions(userPositions);
+      setUserSummary(summary);
       showSuccessNotification(
         "Your Aave positions have been refreshed",
         "Positions Updated"
       );
     } catch (error) {
+      const aaveError = parseAaveError(error, { chainId });
+      setCurrentError(aaveError);
       showErrorNotification(error, "Failed to fetch positions");
     } finally {
       setLoading(false);
@@ -218,7 +346,7 @@ export default function AavePage() {
   }
 
   async function supplyAsset() {
-    if (!selectedAsset || !supplyAmount || !cfg) return;
+    if (!selectedAsset || !supplyAmount) return;
     
     const w = loadWallet();
     if (!w) {
@@ -229,6 +357,11 @@ export default function AavePage() {
       return;
     }
 
+    const password = prompt("Enter wallet password to sign");
+    if (!password) {
+      return;
+    }
+
     try {
       setLoading(true);
       showInfoNotification(
@@ -236,9 +369,19 @@ export default function AavePage() {
         "Supply Started"
       );
       
-      // Mock supply action - in real implementation, this would call Aave contracts
-      // Simulate some processing time
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Decrypt wallet and create wallet client
+      const { decryptSecret } = await import("@/lib/wallet/crypto");
+      const pk = (await decryptSecret(w.encrypted, password)) as `0x${string}`;
+      const wc = buildWalletClient(chain, pk, rpc);
+      
+      // Get asset address from config
+      const assetAddress = cfg?.reserves[selectedAsset]?.underlying as Address;
+      if (!assetAddress) {
+        throw new Error(`Asset ${selectedAsset} not found in Aave config`);
+      }
+      
+      // Supply using SDK
+      await supplyAssetWithSDK(wc, chainId, assetAddress, supplyAmount);
       
       showSuccessNotification(
         `Successfully supplied ${supplyAmount} ${selectedAsset} to Aave`,
@@ -246,7 +389,12 @@ export default function AavePage() {
       );
       setSupplyAmount("");
       setSelectedAsset("");
+      
+      // Refresh positions after supply
+      setTimeout(() => refreshPositions(), 2000);
     } catch (error) {
+      const aaveError = parseAaveError(error, { asset: selectedAsset, chainId });
+      setCurrentError(aaveError);
       showErrorNotification(error, "Supply Failed");
     } finally {
       setLoading(false);
@@ -254,231 +402,424 @@ export default function AavePage() {
   }
 
   return (
-    <main className="space-y-6">
-      <Card withBorder shadow="sm" padding="lg">
-        <Group justify="space-between" align="center">
+    <div className="space-y-8">
+      {/* Header */}
+      <div className="card">
+        <div className="flex items-center justify-between">
           <div>
-            <Text size="lg" fw={700}>Aave DeFi Manager</Text>
-            <Text size="sm" c="dimmed">Lend, borrow, and manage your DeFi positions</Text>
+            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Aave DeFi Manager</h1>
+            <p className="text-[rgb(var(--fg-secondary))]">Lend, borrow, and manage your DeFi positions</p>
           </div>
-          <Group>
-            <Select
-              label="Network"
-              value={String(chainId)}
-              onChange={(v) => setChainId(Number(v))}
-              data={Object.values(CHAINS).map((c) => ({ value: String(c.id), label: `${c.name}` }))}
-              w={200}
-            />
-            <Tooltip label="Refresh positions">
-              <ActionIcon 
-                variant="light" 
-                onClick={refreshPositions}
-                loading={loading}
-                size="lg"
-              >
-                <IconRefresh size={20} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-        </Group>
-      </Card>
+          <div className="flex items-center gap-3">
+            <div className="text-sm text-[rgb(var(--fg-secondary))]">
+              Network: {CHAINS[chainId]?.name || `Chain ${chainId}`}
+            </div>
+            <button
+              onClick={fetchPoolPrices}
+              disabled={loading}
+              className="btn btn-secondary"
+            >
+              Refresh Market Data
+            </button>
+            <button
+              onClick={async () => {
+                try {
+                  setLoading(true);
+                  const { fetchRealAaveMarketData } = await import("@/lib/aave/marketData");
+                  const realData = await fetchRealAaveMarketData(chainId);
+                  console.log("Test real data fetch result:", realData);
+                  if (realData && realData.length > 0) {
+                    setPoolInfo(realData);
+                    showSuccessNotification(
+                      `Successfully fetched ${realData.length} real reserves from Aave V3`,
+                      "Real Data Test"
+                    );
+                  } else {
+                    showInfoNotification(
+                      "No real data available, falling back to mock data",
+                      "Real Data Test"
+                    );
+                  }
+                } catch (error) {
+                  console.error("Real data test failed:", error);
+                  showErrorNotification(error, "Real Data Test Failed");
+                } finally {
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+              className="btn btn-secondary"
+            >
+              Test Real Data
+            </button>
+            <button 
+              onClick={refreshPositions}
+              disabled={loading}
+              className="btn btn-secondary"
+              title="Refresh positions"
+            >
+              <IconRefresh size={20} />
+            </button>
+          </div>
+        </div>
+      </div>
 
-      <Tabs defaultValue="positions">
-        <Tabs.List>
-          <Tabs.Tab value="positions" leftSection={<IconWallet size={16} />}>
+      {/* Error Handler */}
+      <AaveErrorHandler
+        error={currentError}
+        onRetry={() => {
+          setCurrentError(null);
+          // Retry the last operation based on context
+          if (connectionStatus === "testing") {
+            testConnection();
+          } else {
+            fetchPoolPrices();
+          }
+        }}
+        onDismiss={() => setCurrentError(null)}
+      />
+
+      {/* Tabs */}
+      <div className="card">
+        <div className="flex border-b border-[rgb(var(--border-primary))] mb-6">
+          <button
+            onClick={() => setActiveTab("positions")}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === "positions"
+                ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
+                : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
+            }`}
+          >
+            <IconWallet size={16} className="inline mr-2" />
             My Positions
-          </Tabs.Tab>
-          <Tabs.Tab value="deploy" leftSection={<IconBuildingBank size={16} />}>
+          </button>
+          <button
+            onClick={() => setActiveTab("deploy")}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === "deploy"
+                ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
+                : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
+            }`}
+          >
+            <IconBuildingBank size={16} className="inline mr-2" />
             Deploy Strategy
-          </Tabs.Tab>
-          <Tabs.Tab value="supply">
+          </button>
+          <button
+            onClick={() => setActiveTab("supply")}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === "supply"
+                ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
+                : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
+            }`}
+          >
             Supply Assets
-          </Tabs.Tab>
-        </Tabs.List>
+          </button>
+        </div>
 
-        <Tabs.Panel value="positions" pt="md">
-          <Card withBorder shadow="sm" padding="lg">
-            <Group justify="space-between" align="center" mb="md">
-              <Text size="md" fw={600}>Your Aave Positions</Text>
-              <Badge color={walletAddress ? "green" : "red"}>
-                {walletAddress ? "Wallet Connected" : "No Wallet"}
-              </Badge>
-            </Group>
+        {/* Positions Tab */}
+        {activeTab === "positions" && (
+          <div className="space-y-6">
+            <div className="card">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Your Aave Positions</h3>
+                <div className={`badge ${walletAddress ? 'badge-success' : 'badge-primary'}`}>
+                  {walletAddress ? "Wallet Connected" : "No Wallet"}
+                </div>
+              </div>
+              
+              <div className="card mb-4">
+                <h4 className="font-semibold mb-4">Account Summary</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-xs text-[rgb(var(--fg-tertiary))]">Total Supplied</div>
+                    <div className="font-semibold">
+                      ${userSummary ? userSummary.totalSupplied.toFixed(2) : "0.00"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[rgb(var(--fg-tertiary))]">Total Borrowed</div>
+                    <div className="font-semibold">
+                      ${userSummary ? userSummary.totalBorrowed.toFixed(2) : "0.00"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[rgb(var(--fg-tertiary))]">Health Factor</div>
+                    <div className={`font-semibold ${
+                      !userSummary ? "text-gray-400" : 
+                      userSummary.healthFactor > 1.5 ? "text-green-400" : 
+                      userSummary.healthFactor > 1.1 ? "text-yellow-400" : "text-red-400"
+                    }`}>
+                      {userSummary ? userSummary.healthFactor.toFixed(2) : "N/A"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-[rgb(var(--fg-tertiary))]">LTV</div>
+                    <div className="font-semibold">
+                      {userSummary ? (userSummary.ltv * 100).toFixed(1) : "0.0"}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {positions.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-[rgb(var(--border-primary))]">
+                        <th className="text-left py-2 px-2">Asset</th>
+                        <th className="text-left py-2 px-2">Supplied</th>
+                        <th className="text-left py-2 px-2">Borrowed</th>
+                        <th className="text-left py-2 px-2">Supply APY</th>
+                        <th className="text-left py-2 px-2">Borrow APY</th>
+                        <th className="text-left py-2 px-2">USD Value</th>
+                        <th className="text-left py-2 px-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map((pos) => (
+                        <tr key={pos.asset} className="border-b border-[rgb(var(--border-primary))]">
+                          <td className="py-2 px-2">
+                            <span className="font-semibold">{pos.symbol}</span>
+                          </td>
+                          <td className="py-2 px-2">{pos.supplied}</td>
+                          <td className="py-2 px-2">{pos.borrowed}</td>
+                          <td className="py-2 px-2">{pos.supplyAPY}%</td>
+                          <td className="py-2 px-2">{pos.borrowAPY}%</td>
+                          <td className="py-2 px-2">${pos.usdValue.toFixed(2)}</td>
+                          <td className="py-2 px-2">
+                            <div className={`badge ${pos.collateral ? 'badge-success' : 'badge-primary'}`}>
+                              {pos.collateral ? "Collateral" : "Borrowed"}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="card text-center py-8">
+                  <p className="text-[rgb(var(--fg-secondary))] mb-2">
+                    No active positions found.
+                  </p>
+                  <p className="text-xs text-[rgb(var(--fg-tertiary))]">
+                    {walletAddress 
+                      ? "Supply assets to start earning interest or use them as collateral for borrowing."
+                      : "Connect your wallet to view your Aave positions and start lending/borrowing."
+                    }
+                  </p>
+                </div>
+              )}
+            </div>
             
-            {positions.length > 0 ? (
-              <Table withTableBorder withColumnBorders>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Asset</Table.Th>
-                    <Table.Th>Supplied</Table.Th>
-                    <Table.Th>Borrowed</Table.Th>
-                    <Table.Th>APY</Table.Th>
-                    <Table.Th>Status</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {positions.map((pos) => (
-                    <Table.Tr key={pos.asset}>
-                      <Table.Td>
-                        <Group gap="xs">
-                          <Text fw={600}>{pos.symbol}</Text>
-                        </Group>
-                      </Table.Td>
-                      <Table.Td>{pos.supplied}</Table.Td>
-                      <Table.Td>{pos.borrowed}</Table.Td>
-                      <Table.Td>{pos.apy}%</Table.Td>
-                      <Table.Td>
-                        <Badge color={pos.collateral ? "green" : "blue"}>
-                          {pos.collateral ? "Collateral" : "Borrowed"}
-                        </Badge>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
-            ) : (
-              <Card withBorder shadow="sm" padding="md">
-                <Text size="sm" c="dimmed" ta="center">
-                  No positions found. Connect your wallet and supply assets to get started.
-                </Text>
-              </Card>
-            )}
-          </Card>
-        </Tabs.Panel>
+            <div className="card">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Network Pool Information</h3>
+                <div className={`badge ${loading ? 'badge-primary' : poolInfo.length > 0 ? 'badge-success' : ''}`}>
+                  {loading ? "Loading..." : poolInfo.length > 0 ? `${poolInfo.length} pools` : "No data"}
+                </div>
+              </div>
+              {loading ? (
+                <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
+                  Loading market data for {CHAINS[chainId]?.name || `Chain ${chainId}`}...
+                </div>
+              ) : poolInfo.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-[rgb(var(--border-primary))]">
+                        <th className="text-left py-2 px-2">Asset</th>
+                        <th className="text-left py-2 px-2">Total Supply</th>
+                        <th className="text-left py-2 px-2">Total Borrow</th>
+                        <th className="text-left py-2 px-2">Supply APY</th>
+                        <th className="text-left py-2 px-2">Borrow APY</th>
+                        <th className="text-left py-2 px-2">Utilization</th>
+                        <th className="text-left py-2 px-2">Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {poolInfo.map((pool) => (
+                        <tr key={pool.symbol} className="border-b border-[rgb(var(--border-primary))]">
+                          <td className="py-2 px-2">
+                            <span className="font-semibold">{pool.symbol}</span>
+                          </td>
+                          <td className="py-2 px-2">{pool.totalSupply}</td>
+                          <td className="py-2 px-2">{pool.totalBorrow}</td>
+                          <td className="py-2 px-2">
+                            {isNaN(pool.supplyAPY) || pool.supplyAPY === 0 ? 
+                              "N/A" : `${pool.supplyAPY.toFixed(2)}%`
+                            }
+                          </td>
+                          <td className="py-2 px-2">
+                            {isNaN(pool.borrowAPY) || pool.borrowAPY === 0 ? 
+                              "N/A" : `${pool.borrowAPY.toFixed(2)}%`
+                            }
+                          </td>
+                          <td className="py-2 px-2">
+                            {isNaN(pool.utilizationRate) || pool.utilizationRate === 0 ? 
+                              "N/A" : `${pool.utilizationRate.toFixed(1)}%`
+                            }
+                          </td>
+                          <td className="py-2 px-2">${pool.price.toFixed(4)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
+                  No market data available for {CHAINS[chainId]?.name || `Chain ${chainId}`}. Click "Refresh Market Data" to fetch current market information.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
-        <Tabs.Panel value="deploy" pt="md">
-          <Card withBorder shadow="sm" padding="lg">
-            <Text size="md" fw={600} mb="md">Deploy Backtest Strategy</Text>
-            <Text size="sm" c="dimmed" mb="lg">
+        {/* Deploy Tab */}
+        {activeTab === "deploy" && (
+          <div className="card">
+            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Deploy Backtest Strategy</h3>
+            <p className="text-sm text-[rgb(var(--fg-secondary))] mb-6">
               Deploy your saved portfolio strategy to Aave for real DeFi exposure
-            </Text>
+            </p>
             
-            <Select
-              label="Saved Portfolio"
-              value={selected}
-              onChange={(v) => setSelected(v || "")}
-              data={Object.keys(portfolios).map((k) => ({ value: k, label: k }))}
-              placeholder="Select a portfolio to deploy"
-            />
-            
-            {selectedCfg && (
-              <Card withBorder shadow="sm" padding="md" mt="md">
-                <Text size="sm" fw={600} mb="md">Strategy Details</Text>
-                <Grid>
-                  <Grid.Col span={6}>
-                    <Text size="xs" c="dimmed">Initial Capital</Text>
-                    <Text size="sm" fw={600}>${selectedCfg.initialCapital}</Text>
-                  </Grid.Col>
-                  <Grid.Col span={6}>
-                    <Text size="xs" c="dimmed">Date Range</Text>
-                    <Text size="sm" fw={600}>{selectedCfg.start} → {selectedCfg.end}</Text>
-                  </Grid.Col>
-                </Grid>
-                
-                <Text size="sm" fw={600} mt="md" mb="xs">Asset Allocations</Text>
-                <Table withTableBorder withColumnBorders size="xs">
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Asset</Table.Th>
-                      <Table.Th>Weight</Table.Th>
-                      <Table.Th>Status</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {selectedCfg.allocations.map((a) => {
-                      const sym = mapAssetIdToAaveSymbol(a.id);
-                      const ok = sym && supportedAssets.has(sym);
-                      return (
-                        <Table.Tr key={a.id}>
-                          <Table.Td>{a.id}</Table.Td>
-                          <Table.Td>{(a.allocation * 100).toFixed(2)}%</Table.Td>
-                          <Table.Td>
-                            {ok ? (
-                              <Badge color="green" size="xs">Supported</Badge>
-                            ) : (
-                              <Badge color="red" size="xs">Unsupported</Badge>
-                            )}
-                          </Table.Td>
-                        </Table.Tr>
-                      );
-                    })}
-                  </Table.Tbody>
-                </Table>
-                
-                <Button 
-                  mt="md" 
-                  onClick={deploy} 
-                  disabled={!cfg || loading}
-                  loading={loading}
-                  leftSection={<IconPlus size={16} />}
-                  fullWidth
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Saved Portfolio</label>
+                <select
+                  value={selected}
+                  onChange={(e) => setSelected(e.target.value)}
+                  className="input w-full"
                 >
-                  Deploy Strategy
-                </Button>
-              </Card>
-            )}
-            
-            {status && (
-              <StatusCard
-                type={statusType}
-                title="Deployment Status"
-                message={status}
-                progress={statusProgress}
-                onClose={() => {
-                  setStatus("");
-                  setStatusType("info");
-                  setStatusProgress(undefined);
-                }}
-              />
-            )}
-          </Card>
-        </Tabs.Panel>
-
-        <Tabs.Panel value="supply" pt="md">
-          <Card withBorder shadow="sm" padding="lg">
-            <Text size="md" fw={600} mb="md">Supply Assets</Text>
-            <Text size="sm" c="dimmed" mb="lg">
-              Supply assets to Aave to earn interest and use as collateral
-            </Text>
-            
-            <Grid>
-              <Grid.Col span={6}>
-                <Select
-                  label="Asset"
-                  value={selectedAsset}
-                  onChange={(v) => setSelectedAsset(v || "")}
-                  data={Object.keys(cfg?.reserves || {}).map((sym) => ({ 
-                    value: sym, 
-                    label: sym 
-                  }))}
-                  placeholder="Select asset to supply"
+                  <option value="">Select a portfolio to deploy</option>
+                  {Object.keys(portfolios).map((k) => (
+                    <option key={k} value={k}>{k}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {selectedCfg && (
+                <div className="card">
+                  <h4 className="font-semibold mb-4">Strategy Details</h4>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <div className="text-xs text-[rgb(var(--fg-tertiary))]">Initial Capital</div>
+                      <div className="font-semibold">${selectedCfg.initialCapital}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-[rgb(var(--fg-tertiary))]">Date Range</div>
+                      <div className="font-semibold">{selectedCfg.start} → {selectedCfg.end}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="mb-4">
+                    <h5 className="font-semibold mb-2">Asset Allocations</h5>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-[rgb(var(--border-primary))]">
+                            <th className="text-left py-2 px-2">Asset</th>
+                            <th className="text-left py-2 px-2">Weight</th>
+                            <th className="text-left py-2 px-2">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedCfg.allocations.map((a) => {
+                            const sym = mapAssetIdToAaveSymbol(a.id);
+                            const ok = sym && supportedAssets.has(sym);
+                            return (
+                              <tr key={a.id} className="border-b border-[rgb(var(--border-primary))]">
+                                <td className="py-2 px-2">{a.id}</td>
+                                <td className="py-2 px-2">{(a.allocation * 100).toFixed(2)}%</td>
+                                <td className="py-2 px-2">
+                                  {ok ? (
+                                    <div className="badge badge-success">Supported</div>
+                                  ) : (
+                                    <div className="badge">Unsupported</div>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  
+                  <button 
+                    onClick={deploy} 
+                    disabled={!cfg || loading}
+                    className="btn btn-primary w-full"
+                  >
+                    <IconPlus size={16} />
+                    Deploy Strategy
+                  </button>
+                </div>
+              )}
+              
+              {status && (
+                <StatusCard
+                  type={statusType}
+                  title="Deployment Status"
+                  message={status}
+                  progress={statusProgress}
+                  onClose={() => {
+                    setStatus("");
+                    setStatusType("info");
+                    setStatusProgress(undefined);
+                  }}
                 />
-              </Grid.Col>
-              <Grid.Col span={6}>
-                <NumberInput
-                  label="Amount"
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Supply Tab */}
+        {activeTab === "supply" && (
+          <div className="card">
+            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Supply Assets</h3>
+            <p className="text-sm text-[rgb(var(--fg-secondary))] mb-6">
+              Supply assets to Aave to earn interest and use as collateral
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Asset</label>
+                <select
+                  value={selectedAsset}
+                  onChange={(e) => setSelectedAsset(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">Select asset to supply</option>
+                  {Object.keys(cfg?.reserves || {}).map((sym) => (
+                    <option key={sym} value={sym}>{sym}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Amount</label>
+                <input
+                  type="number"
                   value={supplyAmount}
-                  onChange={(v) => setSupplyAmount(String(v || ""))}
+                  onChange={(e) => setSupplyAmount(e.target.value)}
                   placeholder="0.00"
                   min={0}
-                  precision={6}
+                  step="0.000001"
+                  className="input w-full"
                 />
-              </Grid.Col>
-            </Grid>
+              </div>
+            </div>
             
-            <Button 
-              mt="md" 
+            <button 
               onClick={supplyAsset}
               disabled={!selectedAsset || !supplyAmount || loading}
-              loading={loading}
-              leftSection={<IconPlus size={16} />}
-              fullWidth
+              className="btn btn-primary w-full"
             >
+              <IconPlus size={16} />
               Supply Asset
-            </Button>
-          </Card>
-        </Tabs.Panel>
-      </Tabs>
-    </main>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

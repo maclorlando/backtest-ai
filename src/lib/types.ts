@@ -70,6 +70,42 @@ export interface BacktestResponse {
   metrics: BacktestMetrics;
 }
 
+// Aave-specific types
+export interface AavePoolInfo {
+  symbol: string;
+  address: string;
+  totalSupply: string;
+  totalBorrow: string;
+  supplyAPY: number;
+  borrowAPY: number;
+  utilizationRate: number;
+  liquidity: string;
+  price: number;
+}
+
+export interface AaveUserPosition {
+  asset: string;
+  symbol: string;
+  supplied: string;
+  borrowed: string;
+  supplyAPY: number;
+  borrowAPY: number;
+  collateral: boolean;
+  healthFactor: number;
+  ltv: number;
+  usdValue: number;
+}
+
+export interface AaveUserSummary {
+  totalSupplied: number;
+  totalBorrowed: number;
+  totalCollateral: number;
+  healthFactor: number;
+  availableBorrow: number;
+  liquidationThreshold: number;
+  ltv: number;
+}
+
 export const ASSET_ID_TO_SYMBOL: Record<AssetId, string> = {
   bitcoin: "BTC",
   ethereum: "ETH",
