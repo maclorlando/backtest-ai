@@ -1,12 +1,7 @@
 "use client";
-import type { Metadata } from "next";
-import "@mantine/core/styles.css";
-import "@mantine/notifications/styles.css";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { useEffect, useState } from "react";
-import { MantineProvider, createTheme } from "@mantine/core";
-import { Notifications } from "@mantine/notifications";
 import Navigation from "@/components/Navigation";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { AppProvider } from "@/lib/context/AppContext";
@@ -21,8 +16,6 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// metadata cannot be exported from a client component; moved into head tags below
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -32,51 +25,49 @@ export default function RootLayout({
     <html lang="en" className="dark">
       <head>
         <title>Backtest AI</title>
-        <meta name="description" content="Crypto portfolio backtester" />
+        <meta name="description" content="Advanced crypto portfolio backtesting and analysis" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <MantineProvider defaultColorScheme="dark" theme={quantTheme}>
-          <Notifications position="top-center" />
-          <ThemeWrapper>
-            <AppProvider>
-              <ErrorBoundary>
-                <div className="mx-auto max-w-6xl p-6">
-                  <Navigation />
+        <ThemeWrapper>
+          <AppProvider>
+            <ErrorBoundary>
+              <div className="min-h-screen bg-[rgb(var(--bg-primary))]">
+                <Navigation />
+                <main className="container mx-auto px-4 py-6">
                   {children}
-                </div>
-              </ErrorBoundary>
-            </AppProvider>
-          </ThemeWrapper>
-        </MantineProvider>
+                </main>
+              </div>
+            </ErrorBoundary>
+          </AppProvider>
+        </ThemeWrapper>
       </body>
     </html>
   );
 }
+
 function ThemeWrapper({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<string | null>(null);
+  
   useEffect(() => {
     const t = (typeof window !== "undefined" && window.sessionStorage.getItem("bt_theme")) || "dark";
     setTheme(t);
     document.documentElement.classList.toggle("dark", t !== "light");
+    
     const handler = (e: StorageEvent) => {
       if (e.key === "bt_theme" && e.newValue) {
         document.documentElement.classList.toggle("dark", e.newValue !== "light");
       }
     };
+    
     window.addEventListener("storage", handler);
     return () => window.removeEventListener("storage", handler);
   }, []);
+  
   return <>{children}</>;
 }
-
-const quantTheme = createTheme({
-  fontFamily: "IBM Plex Sans, Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-  primaryColor: "blue",
-  defaultRadius: "md",
-  headings: { fontFamily: "IBM Plex Sans, Inter, system-ui, sans-serif" },
-  colors: {
-    blue: ["#e8f1ff", "#d3e4ff", "#a6c7ff", "#79a9ff", "#4b8bff", "#1e6dff", "#1656cc", "#0f3f99", "#072766", "#011233"],
-  },
-});

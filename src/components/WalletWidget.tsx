@@ -1,22 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import { 
-  Group, 
-  Button, 
-  Select, 
-  Menu, 
-  Text, 
-  Avatar, 
-  Badge, 
-  Modal,
-  TextInput,
-  PasswordInput,
-  Stack,
-  Divider,
-  ActionIcon,
-  Tooltip
-} from "@mantine/core";
-import { 
   IconWallet, 
   IconChevronDown, 
   IconLogout, 
@@ -24,7 +8,8 @@ import {
   IconPlus,
   IconRefresh,
   IconCopy,
-  IconExternalLink
+  IconExternalLink,
+  IconX
 } from "@tabler/icons-react";
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { loadWallet, saveWallet } from "@/lib/wallet/storage";
@@ -49,6 +34,7 @@ export default function WalletWidget() {
   const [isCreating, setIsCreating] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [newWalletPassword, setNewWalletPassword] = useState("");
   const [importPrivateKey, setImportPrivateKey] = useState("");
   const [importPassword, setImportPassword] = useState("");
@@ -162,6 +148,7 @@ export default function WalletWidget() {
   function disconnectWallet() {
     setCurrentWallet(null);
     setBalance("0");
+    setShowMenu(false);
     showSuccessNotification("Wallet disconnected", "Wallet Disconnected");
   }
 
@@ -190,183 +177,239 @@ export default function WalletWidget() {
 
   if (!currentWallet) {
     return (
-      <Group>
-        <Select
-          label="Network"
+      <div className="flex items-center gap-3">
+        <select
           value={String(currentNetwork)}
-          onChange={handleNetworkChange}
-          data={SUPPORTED_CHAINS}
-          w={120}
-          size="sm"
-        />
-        <Menu shadow="md" width={200}>
-          <Menu.Target>
-            <Button 
-              variant="light" 
-              leftSection={<IconWallet size={16} />}
-              rightSection={<IconChevronDown size={14} />}
-              loading={isConnecting}
-            >
-              Connect Wallet
-            </Button>
-          </Menu.Target>
-
-          <Menu.Dropdown>
-            <Menu.Item 
-              leftSection={<IconPlus size={14} />}
-              onClick={() => setShowCreateModal(true)}
-            >
-              Create New Wallet
-            </Menu.Item>
-            <Menu.Item 
-              leftSection={<IconSettings size={14} />}
-              onClick={() => setShowImportModal(true)}
-            >
-              Import Wallet
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </Group>
+          onChange={(e) => handleNetworkChange(e.target.value)}
+          className="input text-sm w-24"
+        >
+          {SUPPORTED_CHAINS.map((chain) => (
+            <option key={chain.value} value={chain.value}>
+              {chain.label}
+            </option>
+          ))}
+        </select>
+        
+        <div className="relative">
+          <button
+            onClick={() => setShowMenu(!showMenu)}
+            className="btn btn-secondary"
+          >
+            <IconWallet size={16} />
+            Connect Wallet
+            <IconChevronDown size={14} />
+          </button>
+          
+          {showMenu && (
+            <div className="absolute right-0 top-full mt-2 w-48 bg-[rgb(var(--bg-tertiary))] border border-[rgb(var(--border-secondary))] rounded-lg shadow-lg z-50">
+              <div className="p-2">
+                <button
+                  onClick={() => {
+                    setShowCreateModal(true);
+                    setShowMenu(false);
+                  }}
+                  className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-secondary))] flex items-center gap-2"
+                >
+                  <IconPlus size={14} />
+                  Create New Wallet
+                </button>
+                <button
+                  onClick={() => {
+                    setShowImportModal(true);
+                    setShowMenu(false);
+                  }}
+                  className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-secondary))] flex items-center gap-2"
+                >
+                  <IconSettings size={14} />
+                  Import Wallet
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 
   return (
     <>
-      <Group>
-        <Select
-          label="Network"
+      <div className="flex items-center gap-3">
+        <select
           value={String(currentNetwork)}
-          onChange={handleNetworkChange}
-          data={SUPPORTED_CHAINS}
-          w={120}
-          size="sm"
-        />
+          onChange={(e) => handleNetworkChange(e.target.value)}
+          className="input text-sm w-24"
+        >
+          {SUPPORTED_CHAINS.map((chain) => (
+            <option key={chain.value} value={chain.value}>
+              {chain.label}
+            </option>
+          ))}
+        </select>
         
-        <Menu shadow="md" width={280}>
-          <Menu.Target>
-            <Button 
-              variant="light" 
-              leftSection={<IconWallet size={16} />}
-              rightSection={<IconChevronDown size={14} />}
-            >
-              <Group gap="xs">
-                <Avatar size="xs" color="blue">
-                  {currentWallet.slice(2, 4).toUpperCase()}
-                </Avatar>
-                <Text size="sm" fw={500}>
-                  {currentWallet.slice(0, 6)}...{currentWallet.slice(-4)}
-                </Text>
-                <Badge size="xs" variant="light">
-                  {isLoadingBalance ? "..." : `${balance} ETH`}
-                </Badge>
-              </Group>
-            </Button>
-          </Menu.Target>
-
-          <Menu.Dropdown>
-            <Menu.Label>Wallet</Menu.Label>
-            <Menu.Item>
-              <Text size="xs" c="dimmed" mb={4}>Address</Text>
-              <Group gap="xs">
-                <Text size="sm" style={{ fontFamily: 'monospace' }}>
-                  {currentWallet}
-                </Text>
-                <ActionIcon size="xs" variant="subtle" onClick={copyAddress} component="span">
-                  <IconCopy size={12} />
-                </ActionIcon>
-                <ActionIcon size="xs" variant="subtle" onClick={openExplorer} component="span">
-                  <IconExternalLink size={12} />
-                </ActionIcon>
-              </Group>
-            </Menu.Item>
-            
-            <Menu.Item>
-              <Text size="xs" c="dimmed" mb={4}>Balance</Text>
-              <Group gap="xs">
-                <Text size="sm" fw={500}>
-                  {isLoadingBalance ? "Loading..." : `${balance} ETH`}
-                </Text>
-                                 <ActionIcon size="xs" variant="subtle" onClick={loadBalance} component="span">
-                   <IconRefresh size={12} />
-                 </ActionIcon>
-              </Group>
-            </Menu.Item>
-
-            <Menu.Divider />
-            
-            <Menu.Item 
-              leftSection={<IconLogout size={14} />}
-              color="red"
-              onClick={disconnectWallet}
-            >
-              Disconnect
-            </Menu.Item>
-          </Menu.Dropdown>
-        </Menu>
-      </Group>
+        <div className="relative">
+          <button
+            onClick={() => setShowMenu(!showMenu)}
+            className="btn btn-secondary min-w-0"
+          >
+            <IconWallet size={16} />
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-6 h-6 bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+                {currentWallet.slice(2, 4).toUpperCase()}
+              </div>
+              <span className="text-sm font-medium truncate max-w-24">
+                {currentWallet.slice(0, 6)}...{currentWallet.slice(-4)}
+              </span>
+              <div className="badge badge-primary flex-shrink-0">
+                {isLoadingBalance ? "..." : `${balance} ETH`}
+              </div>
+            </div>
+            <IconChevronDown size={14} />
+          </button>
+          
+          {showMenu && (
+            <div className="absolute right-0 top-full mt-2 w-80 bg-[rgb(var(--bg-tertiary))] border border-[rgb(var(--border-secondary))] rounded-lg shadow-lg z-50">
+              <div className="p-4 space-y-4">
+                <div className="text-sm font-semibold text-[rgb(var(--fg-primary))]">Wallet</div>
+                
+                <div>
+                  <div className="text-xs text-[rgb(var(--fg-tertiary))] mb-2">Address</div>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs font-mono bg-[rgb(var(--bg-secondary))] px-2 py-1 rounded break-all">
+                      {currentWallet}
+                    </code>
+                    <button onClick={copyAddress} className="icon-btn flex-shrink-0" title="Copy address">
+                      <IconCopy size={12} />
+                    </button>
+                    <button onClick={openExplorer} className="icon-btn flex-shrink-0" title="View on explorer">
+                      <IconExternalLink size={12} />
+                    </button>
+                  </div>
+                </div>
+                
+                <div>
+                  <div className="text-xs text-[rgb(var(--fg-tertiary))] mb-2">Balance</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">
+                      {isLoadingBalance ? "Loading..." : `${balance} ETH`}
+                    </span>
+                    <button onClick={loadBalance} className="icon-btn flex-shrink-0" title="Refresh balance">
+                      <IconRefresh size={12} />
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="border-t border-[rgb(var(--border-primary))] pt-4">
+                  <button
+                    onClick={disconnectWallet}
+                    className="w-full text-left p-2 rounded hover:bg-red-900/20 text-red-400 flex items-center gap-2"
+                  >
+                    <IconLogout size={14} />
+                    Disconnect
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Create Wallet Modal */}
-      <Modal 
-        opened={showCreateModal} 
-        onClose={() => setShowCreateModal(false)}
-        title="Create New Wallet"
-        size="sm"
-      >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            Create a new wallet with a secure password. Make sure to save your private key safely.
-          </Text>
-          <PasswordInput
-            label="Password"
-            placeholder="Enter a strong password"
-            value={newWalletPassword}
-            onChange={(e) => setNewWalletPassword(e.target.value)}
-            required
-          />
-          <Button 
-            onClick={createNewWallet}
-            loading={isCreating}
-            fullWidth
-          >
-            Create Wallet
-          </Button>
-        </Stack>
-      </Modal>
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-primary))] rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Create New Wallet</h3>
+              <button
+                onClick={() => setShowCreateModal(false)}
+                className="icon-btn"
+              >
+                <IconX size={16} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">
+                Create a new wallet with a secure password. Make sure to save your private key safely.
+              </p>
+              
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Password</label>
+                <input
+                  type="password"
+                  placeholder="Enter a strong password"
+                  value={newWalletPassword}
+                  onChange={(e) => setNewWalletPassword(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              
+              <button
+                onClick={createNewWallet}
+                disabled={isCreating}
+                className="btn btn-primary w-full"
+              >
+                {isCreating ? "Creating..." : "Create Wallet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Import Wallet Modal */}
-      <Modal 
-        opened={showImportModal} 
-        onClose={() => setShowImportModal(false)}
-        title="Import Wallet"
-        size="sm"
-      >
-        <Stack>
-          <Text size="sm" c="dimmed">
-            Import an existing wallet using your private key.
-          </Text>
-          <TextInput
-            label="Private Key"
-            placeholder="0x..."
-            value={importPrivateKey}
-            onChange={(e) => setImportPrivateKey(e.target.value)}
-            required
-          />
-          <PasswordInput
-            label="Password"
-            placeholder="Enter password to encrypt"
-            value={importPassword}
-            onChange={(e) => setImportPassword(e.target.value)}
-            required
-          />
-          <Button 
-            onClick={importWallet}
-            loading={isCreating}
-            fullWidth
-          >
-            Import Wallet
-          </Button>
-        </Stack>
-      </Modal>
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-primary))] rounded-lg p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Import Wallet</h3>
+              <button
+                onClick={() => setShowImportModal(false)}
+                className="icon-btn"
+              >
+                <IconX size={16} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">
+                Import an existing wallet using your private key.
+              </p>
+              
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Private Key</label>
+                <input
+                  type="text"
+                  placeholder="0x..."
+                  value={importPrivateKey}
+                  onChange={(e) => setImportPrivateKey(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Password</label>
+                <input
+                  type="password"
+                  placeholder="Enter password to encrypt"
+                  value={importPassword}
+                  onChange={(e) => setImportPassword(e.target.value)}
+                  className="input w-full"
+                  required
+                />
+              </div>
+              
+              <button
+                onClick={importWallet}
+                disabled={isCreating}
+                className="btn btn-primary w-full"
+              >
+                {isCreating ? "Importing..." : "Import Wallet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
