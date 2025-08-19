@@ -314,7 +314,7 @@ function getMockPoolDataForChain(chainId: number): AavePoolInfo[] {
     "1": [
       {
         symbol: "USDC",
-        address: "0xA0b86a33E6441b8c4C8C8C8C8C8C8C8C8C8C8C8",
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         totalSupply: "1000000000.00",
         totalBorrow: "500000000.00",
         supplyAPY: 2.5,

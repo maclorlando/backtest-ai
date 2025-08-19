@@ -67,3 +67,35 @@ export async function decryptSecret(enc: EncryptedSecret, password: string): Pro
   const plainBuf = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipher);
   return textDecoder.decode(plainBuf);
 }
+
+/**
+ * Validate and normalize a private key
+ * @param privateKey - The private key to validate (with or without 0x prefix)
+ * @returns Normalized private key with 0x prefix, or throws error if invalid
+ */
+export function validateAndNormalizePrivateKey(privateKey: string): `0x${string}` {
+  if (!privateKey || typeof privateKey !== 'string') {
+    throw new Error('Private key is required and must be a string');
+  }
+
+  // Trim whitespace
+  let normalized = privateKey.trim();
+
+  // Add 0x prefix if missing
+  if (!normalized.startsWith('0x')) {
+    normalized = '0x' + normalized;
+  }
+
+  // Validate length (0x + 64 hex chars = 66 total)
+  if (normalized.length !== 66) {
+    throw new Error('Private key must be exactly 64 hexadecimal characters (with or without 0x prefix)');
+  }
+
+  // Validate hex format
+  const hexRegex = /^0x[0-9a-fA-F]{64}$/;
+  if (!hexRegex.test(normalized)) {
+    throw new Error('Private key must contain only hexadecimal characters (0-9, a-f, A-F)');
+  }
+
+  return normalized as `0x${string}`;
+}

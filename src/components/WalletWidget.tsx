@@ -9,10 +9,12 @@ import {
   IconRefresh,
   IconCopy,
   IconExternalLink,
-  IconX
+  IconX,
+  IconPlug,
+  IconDatabase
 } from "@tabler/icons-react";
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
-import { loadWallet, saveWallet } from "@/lib/wallet/storage";
+import { loadWallet, saveWallet, clearWallet } from "@/lib/wallet/storage";
 import { generateWallet, encryptSecret, decryptSecret } from "@/lib/wallet/crypto";
 import { buildPublicClientWithFallback } from "@/lib/wallet/viem";
 import { formatEther } from "viem";
@@ -27,6 +29,16 @@ const SUPPORTED_CHAINS = [
   { value: "42161", label: "Arbitrum" },
 ];
 
+type WalletType = "external" | "local";
+
+interface WalletInfo {
+  address: string;
+  type: WalletType;
+  name?: string;
+  encrypted?: string;
+  createdAt?: number;
+}
+
 export default function WalletWidget() {
   const { currentWallet, currentNetwork, setCurrentWallet, setCurrentNetwork } = useApp();
   const [balance, setBalance] = useState<string>("0");
@@ -39,12 +51,20 @@ export default function WalletWidget() {
   const [importPrivateKey, setImportPrivateKey] = useState("");
   const [importPassword, setImportPassword] = useState("");
   const [isLoadingBalance, setIsLoadingBalance] = useState(false);
+  const [availableWallets, setAvailableWallets] = useState<WalletInfo[]>([]);
+  const [currentWalletType, setCurrentWalletType] = useState<WalletType | null>(null);
+
+  // Load wallets on mount
+  useEffect(() => {
+    loadAvailableWallets();
+  }, []);
 
   // Load wallet on mount
   useEffect(() => {
     const wallet = loadWallet();
     if (wallet?.address && !currentWallet) {
       setCurrentWallet(wallet.address);
+      setCurrentWalletType("local");
     }
   }, [currentWallet, setCurrentWallet]);
 
@@ -55,24 +75,55 @@ export default function WalletWidget() {
     }
   }, [currentWallet, currentNetwork]);
 
-  async function loadBalance() {
-    if (!currentWallet) return;
+  function loadAvailableWallets() {
+    const wallets: WalletInfo[] = [];
     
-    setIsLoadingBalance(true);
-    try {
-      const chain = CHAINS[currentNetwork];
-      const rpc = DEFAULT_RPC_BY_CHAIN[currentNetwork];
-      const client = buildPublicClientWithFallback(chain, rpc);
-      
-      const balanceWei = await client.getBalance({ address: currentWallet as `0x${string}` });
-      const balanceEth = formatEther(balanceWei);
-      setBalance(parseFloat(balanceEth).toFixed(4));
-    } catch (error) {
-      console.error("Failed to load balance:", error);
-      setBalance("0");
-    } finally {
-      setIsLoadingBalance(false);
+    // Load local wallet
+    const localWallet = loadWallet();
+    if (localWallet?.address) {
+      wallets.push({
+        address: localWallet.address,
+        type: "local",
+        name: "Local Wallet",
+        encrypted: localWallet.encrypted,
+        createdAt: localWallet.createdAt
+      });
     }
+    
+    setAvailableWallets(wallets);
+  }
+
+  async function connectExternalWallet() {
+    if (typeof window === 'undefined' || !window.ethereum) {
+      showErrorNotification(new Error("No Ethereum wallet detected. Please install MetaMask or Brave Wallet."), "Connection Failed");
+      return;
+    }
+
+    setIsConnecting(true);
+    try {
+      // Request account access
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      
+      if (accounts && accounts.length > 0) {
+        const address = accounts[0];
+        setCurrentWallet(address);
+        setCurrentWalletType("external");
+        showSuccessNotification("External wallet connected successfully", "Wallet Connected");
+      } else {
+        throw new Error("No accounts found");
+      }
+    } catch (error) {
+      showErrorNotification(error, "Connection Failed");
+    } finally {
+      setIsConnecting(false);
+    }
+  }
+
+  async function switchToLocalWallet(address: string) {
+    setCurrentWallet(address);
+    setCurrentWalletType("local");
+    setShowMenu(false);
+    showSuccessNotification("Switched to local wallet", "Wallet Switched");
   }
 
   async function createNewWallet() {
@@ -89,14 +140,15 @@ export default function WalletWidget() {
       const walletData = {
         address,
         encrypted,
-        type: "pk" as const,
         createdAt: Date.now(),
       };
       
       saveWallet(walletData);
       setCurrentWallet(address);
+      setCurrentWalletType("local");
       setShowCreateModal(false);
       setNewWalletPassword("");
+      loadAvailableWallets(); // Refresh wallet list
       showSuccessNotification("Wallet created successfully", "Wallet Created");
     } catch (error) {
       showErrorNotification(error, "Create Wallet Failed");
@@ -128,15 +180,16 @@ export default function WalletWidget() {
       const walletData = {
         address,
         encrypted,
-        type: "pk" as const,
         createdAt: Date.now(),
       };
       
       saveWallet(walletData);
       setCurrentWallet(address);
+      setCurrentWalletType("local");
       setShowImportModal(false);
       setImportPrivateKey("");
       setImportPassword("");
+      loadAvailableWallets(); // Refresh wallet list
       showSuccessNotification("Wallet imported successfully", "Wallet Imported");
     } catch (error) {
       showErrorNotification(error, "Import Wallet Failed");
@@ -147,6 +200,7 @@ export default function WalletWidget() {
 
   function disconnectWallet() {
     setCurrentWallet(null);
+    setCurrentWalletType(null);
     setBalance("0");
     setShowMenu(false);
     showSuccessNotification("Wallet disconnected", "Wallet Disconnected");
@@ -175,6 +229,26 @@ export default function WalletWidget() {
     setCurrentNetwork(newChainId);
   }
 
+  async function loadBalance() {
+    if (!currentWallet) return;
+    
+    setIsLoadingBalance(true);
+    try {
+      const chain = CHAINS[currentNetwork];
+      const rpc = DEFAULT_RPC_BY_CHAIN[currentNetwork];
+      const client = buildPublicClientWithFallback(chain, rpc);
+      
+      const balanceWei = await client.getBalance({ address: currentWallet as `0x${string}` });
+      const balanceEth = formatEther(balanceWei);
+      setBalance(parseFloat(balanceEth).toFixed(4));
+    } catch (error) {
+      console.error("Failed to load balance:", error);
+      setBalance("0");
+    } finally {
+      setIsLoadingBalance(false);
+    }
+  }
+
   if (!currentWallet) {
     return (
       <div className="flex items-center gap-3">
@@ -201,8 +275,46 @@ export default function WalletWidget() {
           </button>
           
           {showMenu && (
-            <div className="absolute right-0 top-full mt-2 w-48 bg-[rgb(var(--bg-tertiary))] border border-[rgb(var(--border-secondary))] rounded-lg shadow-lg z-50">
-              <div className="p-2">
+            <div className="absolute right-0 top-full mt-2 w-64 bg-[rgb(var(--bg-tertiary))] border border-[rgb(var(--border-secondary))] rounded-lg shadow-lg z-50">
+              <div className="p-2 space-y-1">
+                {/* External Wallet Connection */}
+                <button
+                  onClick={connectExternalWallet}
+                  disabled={isConnecting}
+                  className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-secondary))] flex items-center gap-2"
+                >
+                  <IconPlug size={14} />
+                  {isConnecting ? "Connecting..." : "Connect External Wallet"}
+                </button>
+                
+                {/* Available Local Wallets */}
+                {availableWallets.length > 0 && (
+                  <>
+                    <div className="border-t border-[rgb(var(--border-primary))] my-2"></div>
+                    <div className="text-xs text-[rgb(var(--fg-tertiary))] px-2 py-1">Local Wallets</div>
+                    {availableWallets.map((wallet) => (
+                      <button
+                        key={wallet.address}
+                        onClick={() => switchToLocalWallet(wallet.address)}
+                        className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-secondary))] flex items-center gap-2"
+                      >
+                        <IconDatabase size={14} />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium truncate">
+                            {wallet.name || "Local Wallet"}
+                          </div>
+                          <div className="text-xs text-[rgb(var(--fg-tertiary))] truncate">
+                            {wallet.address.slice(0, 6)}...{wallet.address.slice(-4)}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </>
+                )}
+                
+                <div className="border-t border-[rgb(var(--border-primary))] my-2"></div>
+                
+                {/* Create/Import Options */}
                 <button
                   onClick={() => {
                     setShowCreateModal(true);
@@ -262,6 +374,11 @@ export default function WalletWidget() {
               <div className="badge badge-primary flex-shrink-0">
                 {isLoadingBalance ? "..." : `${balance} ETH`}
               </div>
+              {currentWalletType && (
+                <div className="badge badge-secondary flex-shrink-0 text-xs">
+                  {currentWalletType === "external" ? "EXT" : "LOCAL"}
+                </div>
+              )}
             </div>
             <IconChevronDown size={14} />
           </button>
@@ -269,7 +386,9 @@ export default function WalletWidget() {
           {showMenu && (
             <div className="absolute right-0 top-full mt-2 w-80 bg-[rgb(var(--bg-tertiary))] border border-[rgb(var(--border-secondary))] rounded-lg shadow-lg z-50">
               <div className="p-4 space-y-4">
-                <div className="text-sm font-semibold text-[rgb(var(--fg-primary))]">Wallet</div>
+                <div className="text-sm font-semibold text-[rgb(var(--fg-primary))]">
+                  Wallet {currentWalletType === "external" ? "(External)" : "(Local)"}
+                </div>
                 
                 <div>
                   <div className="text-xs text-[rgb(var(--fg-tertiary))] mb-2">Address</div>
