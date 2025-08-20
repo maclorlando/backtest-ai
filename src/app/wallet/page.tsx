@@ -20,12 +20,12 @@ import { createRandomPrivateKey, buildPublicClient, buildPublicClientWithFallbac
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { Address, formatEther } from "viem";
 import { readErc20Balance, readErc20Metadata } from "@/lib/evm/erc20";
-import { fetchCurrentPricesUSD } from "@/lib/prices";
+import { fetchCurrentPricesUSD, fetchCoinData, fetchMarketData, fetchTrendingCoins, searchCoins, fetchGlobalData, type CoinGeckoMarketData, type CoinGeckoGlobalData } from "@/lib/prices";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation, showWarningNotification } from "@/lib/utils/errorHandling";
 import { useApp } from "@/lib/context/AppContext";
 
 export default function WalletPage() {
-  const { currentNetwork } = useApp();
+  const { currentNetwork, removeWallet } = useApp();
   const chainId = currentNetwork;
   const [unlockedPk, setUnlockedPk] = useState<string | null>(null);
   const [address, setAddress] = useState<string>("");
@@ -46,6 +46,12 @@ export default function WalletPage() {
   const [addTokenAddress, setAddTokenAddress] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Array<{ symbol: string; name: string; address: string; decimals: number }>>([]);
+  
+  // Enhanced market data states
+  const [marketData, setMarketData] = useState<CoinGeckoMarketData[]>([]);
+  const [globalData, setGlobalData] = useState<CoinGeckoGlobalData | null>(null);
+  const [trendingCoins, setTrendingCoins] = useState<Array<{ id: string; name: string; symbol: string; thumb: string; score: number }>>([]);
+  const [enhancedSearchResults, setEnhancedSearchResults] = useState<Array<{ id: string; name: string; symbol: string; market_cap_rank: number; thumb: string; large: string }>>([]);
 
   useEffect(() => {
     const wallet = loadWallet();
@@ -54,14 +60,80 @@ export default function WalletPage() {
     }
     // Clean up any duplicate tokens and load the cleaned list
     cleanupDuplicateTokens(chainId);
-    setTracked(loadTrackedTokens(chainId));
+    const loadedTokens = loadTrackedTokens(chainId);
+    
+    // Validate tokens for the current network
+    validateTrackedTokensForNetwork(chainId, loadedTokens);
+    
+    setTracked(loadedTokens);
   }, [chainId]);
+
+  // Function to validate tracked tokens for the current network
+  async function validateTrackedTokensForNetwork(chainId: number, tokens: TrackedToken[]) {
+    if (tokens.length === 0) return;
+    
+    const chain = CHAINS[chainId];
+    const rpc = DEFAULT_RPC_BY_CHAIN[chainId];
+    
+    if (!chain || !rpc) {
+      showErrorNotification(
+        new Error(`Network configuration not found for chain ID ${chainId}`), 
+        "Network Configuration Error"
+      );
+      return;
+    }
+
+    const pub = buildPublicClientWithFallback(chain, rpc);
+    const invalidTokens: string[] = [];
+    
+    // Check each token to see if it's valid on the current network
+    for (const token of tokens) {
+      try {
+        // Try to read metadata to validate the token exists on this network
+        await retryOperation(async () => {
+          return await readErc20Metadata(pub, token.address as Address);
+        }, 2, 500); // Shorter timeout for validation
+      } catch (error) {
+        console.warn(`Token ${token.symbol} (${token.address}) is not valid on chain ${chainId}:`, error);
+        invalidTokens.push(token.address);
+      }
+    }
+    
+    // If we found invalid tokens, show a warning and offer to clean them up
+    if (invalidTokens.length > 0) {
+      const networkName = CHAINS[chainId]?.name || `Chain ${chainId}`;
+      showWarningNotification(
+        `Found ${invalidTokens.length} token(s) that are not valid on ${networkName}. These tokens may have been added on a different network. Use "Clean Invalid" to remove them.`,
+        "Invalid Tokens Detected"
+      );
+    }
+  }
 
   useEffect(() => {
     if (address && tracked.length > 0) {
       refreshBalances();
     }
   }, [address, tracked, chainId]);
+
+  // Refresh balances when network changes
+  useEffect(() => {
+    if (address && tracked.length > 0) {
+      refreshBalances();
+    }
+  }, [chainId]);
+
+  // Fetch enhanced market data on mount
+  useEffect(() => {
+    fetchTrendingData();
+    fetchGlobalMarketData();
+  }, []);
+
+  // Fetch enhanced market data when tracked tokens change
+  useEffect(() => {
+    if (tracked.length > 0) {
+      fetchEnhancedMarketData();
+    }
+  }, [tracked]);
 
   async function refreshBalances() {
     if (!address || tracked.length === 0) return;
@@ -111,66 +183,93 @@ export default function WalletPage() {
         } catch (error) {
           console.warn(`Failed to fetch balance for ${token.symbol}:`, error);
           newBalances[token.address] = "0";
-          // Show user-friendly error for invalid tokens
-          if (error instanceof Error && error.message.includes("Invalid ERC20")) {
-            showErrorNotification(
-              new Error(`Token ${token.symbol} at address ${token.address} is not a valid ERC20 contract. Consider removing it from tracking.`),
-              "Invalid Token"
-            );
+          
+          // Provide more specific error messages based on the error type
+          if (error instanceof Error) {
+            if (error.message.includes("returned no data") || error.message.includes("Invalid ERC20")) {
+              showWarningNotification(
+                `Token ${token.symbol} (${token.address}) is not valid on the current network. This token may have been added on a different network. Use "Clean Invalid" to remove it.`,
+                "Invalid Token on Current Network"
+              );
+            } else if (error.message.includes("timeout") || error.message.includes("network")) {
+              showWarningNotification(
+                `Failed to fetch balance for ${token.symbol} due to network issues. Please try again.`,
+                "Network Error"
+              );
+            } else {
+              showWarningNotification(
+                `Failed to fetch balance for ${token.symbol}: ${error.message}`,
+                "Balance Fetch Error"
+              );
+            }
           }
         }
       }
 
       setBalances(newBalances);
 
-      // Fetch prices only for valid tokens
-      if (validTokenAddresses.length > 0) {
+      // Fetch prices only for valid tokens using symbols
+      // Note: CoinGecko API provides global prices regardless of network
+      if (tracked.length > 0) {
         try {
-          const tokenPrices = await fetchCurrentPricesUSD(validTokenAddresses);
-          setPrices(tokenPrices);
-          
-          // Also try to fetch prices using token symbols for better coverage
+          // Create a mapping from common token symbols to CoinGecko IDs
+          const symbolToCoinGeckoId: Record<string, string> = {
+            'eth': 'ethereum',
+            'weth': 'ethereum',
+            'btc': 'bitcoin',
+            'wbtc': 'bitcoin',
+            'usdc': 'usd-coin',
+            'usdt': 'tether',
+            'dai': 'dai',
+            'aave': 'aave',
+            'link': 'chainlink',
+            'uni': 'uniswap',
+            'matic': 'matic-network',
+            'bnb': 'binancecoin',
+            'ada': 'cardano',
+            'dot': 'polkadot',
+            'sol': 'solana',
+            'avax': 'avalanche-2',
+            'atom': 'cosmos',
+            'ltc': 'litecoin',
+            'bch': 'bitcoin-cash',
+            'xrp': 'ripple',
+            'doge': 'dogecoin',
+            'shib': 'shiba-inu',
+            'pepe': 'pepe',
+            'arb': 'arbitrum',
+            'op': 'optimism',
+            'base': 'base',
+            'polygon': 'matic-network',
+            'chainlink': 'chainlink',
+            'uniswap': 'uniswap',
+          };
+
+          // Get token symbols and map them to CoinGecko IDs
           const tokenSymbols = tracked
             .filter(token => token.symbol && token.symbol !== "UNKNOWN")
-            .map(token => token.symbol.toLowerCase());
+            .map(token => {
+              const symbol = token.symbol.toLowerCase();
+              return symbolToCoinGeckoId[symbol] || symbol;
+            });
           
           if (tokenSymbols.length > 0) {
-            try {
-              const symbolPrices = await fetchCurrentPricesUSD(tokenSymbols);
-              // Merge symbol-based prices with address-based prices
-              setPrices(prev => ({
-                ...prev,
-                ...symbolPrices
-              }));
-            } catch (symbolError) {
-              console.warn("Failed to fetch prices by symbol:", symbolError);
-            }
-          }
-          
-          // Map token addresses to their symbols for better price lookup
-          const addressToSymbolMap: Record<string, string> = {};
-          tracked.forEach(token => {
-            if (token.symbol && token.symbol !== "UNKNOWN") {
-              addressToSymbolMap[token.address.toLowerCase()] = token.symbol.toLowerCase();
-            }
-          });
-          
-          // Try to get prices for tokens that don't have prices yet
-          const missingPrices = tracked
-            .filter(token => !prices[token.address] && !prices[token.symbol?.toLowerCase()])
-            .map(token => token.symbol?.toLowerCase())
-            .filter(Boolean);
-          
-          if (missingPrices.length > 0) {
-            try {
-              const missingTokenPrices = await fetchCurrentPricesUSD(missingPrices);
-              setPrices(prev => ({
-                ...prev,
-                ...missingTokenPrices
-              }));
-            } catch (missingError) {
-              console.warn("Failed to fetch missing prices:", missingError);
-            }
+            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols);
+            
+            // Map the prices back to the original symbols
+            const mappedPrices: Record<string, number> = {};
+            tracked.forEach(token => {
+              if (token.symbol && token.symbol !== "UNKNOWN") {
+                const symbol = token.symbol.toLowerCase();
+                const coinGeckoId = symbolToCoinGeckoId[symbol] || symbol;
+                if (tokenPrices[coinGeckoId]) {
+                  mappedPrices[token.address] = tokenPrices[coinGeckoId];
+                  mappedPrices[symbol] = tokenPrices[coinGeckoId];
+                }
+              }
+            });
+            
+            setPrices(mappedPrices);
           }
         } catch (error) {
           console.warn("Failed to fetch prices:", error);
@@ -200,14 +299,64 @@ export default function WalletPage() {
     try {
       setLoading(true);
       
-      // Get token symbols for price fetching
+      // Create a mapping from common token symbols to CoinGecko IDs
+      const symbolToCoinGeckoId: Record<string, string> = {
+        'eth': 'ethereum',
+        'weth': 'ethereum',
+        'btc': 'bitcoin',
+        'wbtc': 'bitcoin',
+        'usdc': 'usd-coin',
+        'usdt': 'tether',
+        'dai': 'dai',
+        'aave': 'aave',
+        'link': 'chainlink',
+        'uni': 'uniswap',
+        'matic': 'matic-network',
+        'bnb': 'binancecoin',
+        'ada': 'cardano',
+        'dot': 'polkadot',
+        'sol': 'solana',
+        'avax': 'avalanche-2',
+        'atom': 'cosmos',
+        'ltc': 'litecoin',
+        'bch': 'bitcoin-cash',
+        'xrp': 'ripple',
+        'doge': 'dogecoin',
+        'shib': 'shiba-inu',
+        'pepe': 'pepe',
+        'arb': 'arbitrum',
+        'op': 'optimism',
+        'base': 'base',
+        'polygon': 'matic-network',
+        'chainlink': 'chainlink',
+        'uniswap': 'uniswap',
+      };
+      
+      // Get token symbols and map them to CoinGecko IDs
       const tokenSymbols = tracked
         .filter(token => token.symbol && token.symbol !== "UNKNOWN")
-        .map(token => token.symbol.toLowerCase());
+        .map(token => {
+          const symbol = token.symbol.toLowerCase();
+          return symbolToCoinGeckoId[symbol] || symbol;
+        });
       
       if (tokenSymbols.length > 0) {
-        const newPrices = await fetchCurrentPricesUSD(tokenSymbols);
-        setPrices(newPrices);
+        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols);
+        
+        // Map the prices back to the original symbols
+        const mappedPrices: Record<string, number> = {};
+        tracked.forEach(token => {
+          if (token.symbol && token.symbol !== "UNKNOWN") {
+            const symbol = token.symbol.toLowerCase();
+            const coinGeckoId = symbolToCoinGeckoId[symbol] || symbol;
+            if (tokenPrices[coinGeckoId]) {
+              mappedPrices[token.address] = tokenPrices[coinGeckoId];
+              mappedPrices[symbol] = tokenPrices[coinGeckoId];
+            }
+          }
+        });
+        
+        setPrices(mappedPrices);
         showSuccessNotification(
           `Refreshed prices for ${tokenSymbols.length} tokens`,
           "Prices Updated"
@@ -218,6 +367,111 @@ export default function WalletPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // NEW: Enhanced market data functions
+
+  async function fetchTrendingData() {
+    try {
+      const trending = await fetchTrendingCoins();
+      if (trending) {
+        const coins = trending.coins.map(coin => ({
+          id: coin.item.id,
+          name: coin.item.name,
+          symbol: coin.item.symbol,
+          thumb: coin.item.thumb,
+          score: coin.item.score
+        }));
+        setTrendingCoins(coins);
+      }
+    } catch (error) {
+      console.warn("Failed to fetch trending coins:", error);
+    }
+  }
+
+  async function fetchGlobalMarketData() {
+    try {
+      const global = await fetchGlobalData();
+      setGlobalData(global);
+    } catch (error) {
+      console.warn("Failed to fetch global market data:", error);
+    }
+  }
+
+  async function fetchEnhancedMarketData() {
+    try {
+      // Get CoinGecko IDs for tracked tokens
+      const symbolToCoinGeckoId: Record<string, string> = {
+        'eth': 'ethereum',
+        'weth': 'ethereum',
+        'btc': 'bitcoin',
+        'wbtc': 'bitcoin',
+        'usdc': 'usd-coin',
+        'usdt': 'tether',
+        'dai': 'dai',
+        'aave': 'aave',
+        'link': 'chainlink',
+        'uni': 'uniswap',
+        'matic': 'matic-network',
+        'bnb': 'binancecoin',
+        'ada': 'cardano',
+        'dot': 'polkadot',
+        'sol': 'solana',
+        'avax': 'avalanche-2',
+        'atom': 'cosmos',
+        'ltc': 'litecoin',
+        'bch': 'bitcoin-cash',
+        'xrp': 'ripple',
+        'doge': 'dogecoin',
+        'shib': 'shiba-inu',
+        'pepe': 'pepe',
+        'arb': 'arbitrum',
+        'op': 'optimism',
+        'base': 'base',
+        'polygon': 'matic-network',
+        'chainlink': 'chainlink',
+        'uniswap': 'uniswap',
+      };
+
+      const coinIds = tracked
+        .filter(token => token.symbol && token.symbol !== "UNKNOWN")
+        .map(token => {
+          const symbol = token.symbol.toLowerCase();
+          return symbolToCoinGeckoId[symbol] || symbol;
+        })
+        .filter(Boolean);
+
+      if (coinIds.length > 0) {
+        const marketData = await fetchMarketData(coinIds);
+        setMarketData(marketData);
+      }
+    } catch (error) {
+      console.warn("Failed to fetch enhanced market data:", error);
+    }
+  }
+
+  async function enhancedSearchTokens(query: string) {
+    if (query.trim().length < 2) {
+      setEnhancedSearchResults([]);
+      return;
+    }
+
+    try {
+      const results = await searchCoins(query);
+      setEnhancedSearchResults(results);
+    } catch (error) {
+      console.warn("Failed to search tokens:", error);
+      setEnhancedSearchResults([]);
+    }
+  }
+
+  function addCoinGeckoToken(coin: { id: string; name: string; symbol: string; thumb: string }) {
+    // For now, we'll show a notification that this feature is coming
+    // In the future, we can integrate this with contract address lookup
+    showInfoNotification(
+      `Enhanced token addition for ${coin.symbol} (${coin.name}) is coming soon!`,
+      "Feature Coming Soon"
+    );
   }
 
   function lock() {
@@ -232,7 +486,7 @@ export default function WalletPage() {
 
   function forget() {
     if (confirm("Are you sure you want to forget this wallet? This will remove it from storage.")) {
-      localStorage.removeItem("bt_wallet");
+      clearWallet();
       setAddress("");
       setUnlockedPk(null);
       setShowPrivateKey(false);
@@ -240,6 +494,7 @@ export default function WalletPage() {
         "Wallet has been removed from storage",
         "Wallet Forgotten"
       );
+      removeWallet();
     }
   }
 
@@ -390,6 +645,41 @@ export default function WalletPage() {
   function showPopularTokens() {
     const popularTokens = getPopularTokens(chainId);
     setSearchResults(popularTokens);
+  }
+
+  // Function to add popular tokens for the current network
+  function addPopularTokensForNetwork() {
+    const popularTokens = getPopularTokens(chainId);
+    let addedCount = 0;
+    
+    for (const token of popularTokens) {
+      const newToken: TrackedToken = {
+        address: token.address,
+        symbol: token.symbol,
+        name: token.name,
+        decimals: token.decimals,
+      };
+      
+      if (addTrackedToken(chainId, newToken)) {
+        addedCount++;
+      }
+    }
+    
+    // Reload tracked tokens
+    setTracked(loadTrackedTokens(chainId));
+    
+    const networkName = CHAINS[chainId]?.name || `Chain ${chainId}`;
+    if (addedCount > 0) {
+      showSuccessNotification(
+        `Added ${addedCount} popular tokens for ${networkName}`,
+        "Popular Tokens Added"
+      );
+    } else {
+      showInfoNotification(
+        `All popular tokens for ${networkName} are already being tracked`,
+        "No New Tokens Added"
+      );
+    }
   }
 
   function cleanupDuplicates() {
@@ -765,13 +1055,13 @@ export default function WalletPage() {
         </div>
       </div>
 
-      {/* Tracked Tokens */}
+      {/* Wallet Balances */}
       <div className="card">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
           <div className="flex items-center gap-4">
-            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Tracked Tokens</h3>
+            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Wallet Balances</h3>
             <div className={`badge ${tracked.length > 0 ? 'badge-success' : ''}`}>
-              {tracked.length} tokens
+              {tracked.length} tokens tracked
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -808,7 +1098,7 @@ export default function WalletPage() {
               className="btn btn-primary"
             >
               <IconPlus size={16} />
-              <span className="hidden sm:inline">Add by Address</span>
+              <span className="hidden sm:inline">Add Token</span>
               <span className="sm:hidden">Add</span>
             </button>
             <button 
@@ -816,73 +1106,42 @@ export default function WalletPage() {
               className="btn btn-primary"
             >
               <IconSearch size={16} />
-              <span className="hidden sm:inline">Search Tokens</span>
+              <span className="hidden sm:inline">Search</span>
               <span className="sm:hidden">Search</span>
+            </button>
+            <button 
+              onClick={refreshBalances} 
+              disabled={!address || loading}
+              className="btn btn-secondary"
+            >
+              <IconRefresh size={16} />
+              <span className="hidden sm:inline">Refresh Balances</span>
+              <span className="sm:hidden">Refresh</span>
             </button>
           </div>
         </div>
         
-        <div className="space-y-3">
+        {/* Network-specific token info */}
+        <div className="p-3 bg-[rgb(var(--bg-tertiary))] rounded-lg border border-[rgb(var(--border-secondary))] mb-4">
+          <p className="text-sm text-[rgb(var(--fg-secondary))]">
+            <strong>Current Network:</strong> {CHAINS[chainId]?.name || `Chain ${chainId}`}<br />
+            <strong>Note:</strong> Tokens are network-specific. When you switch networks, tokens added on other networks may not be valid. 
+            Use "Add Popular Tokens" to quickly add tokens for the current network, or "Clean Invalid" to remove invalid tokens.
+          </p>
+        </div>
+        
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
           <button 
             onClick={showPopularTokens}
-            className="btn btn-secondary w-full"
+            className="btn btn-secondary"
           >
             View Popular Tokens
           </button>
-          {tracked.length > 0 && (
-            <div className="mt-6 overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-[rgb(var(--border-primary))]">
-                    <th className="text-left py-2 px-2">Symbol</th>
-                    <th className="text-left py-2 px-2">Name</th>
-                    <th className="text-left py-2 px-2">Address</th>
-                    <th className="text-left py-2 px-2">Decimals</th>
-                    <th className="text-left py-2 px-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tracked.map((t, index) => (
-                    <tr key={`tracked-${t.address}-${index}`} className="border-b border-[rgb(var(--border-primary))]">
-                      <td className="py-2 px-2">
-                        <span className="font-semibold">{t.symbol}</span>
-                      </td>
-                      <td className="py-2 px-2">{t.name}</td>
-                      <td className="py-2 px-2">
-                        <code className="text-xs font-mono">
-                          {t.address.slice(0, 8)}...{t.address.slice(-6)}
-                        </code>
-                      </td>
-                      <td className="py-2 px-2">{t.decimals}</td>
-                      <td className="py-2 px-2">
-                        <button 
-                          onClick={() => removeToken(t.address)}
-                          className="icon-btn"
-                          title="Remove token"
-                        >
-                          <IconTrash size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Wallet Balances */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Wallet Balances</h3>
           <button 
-            onClick={refreshBalances} 
-            disabled={!address || loading}
-            className="btn btn-secondary"
+            onClick={addPopularTokensForNetwork}
+            className="btn btn-primary"
           >
-            <IconRefresh size={16} />
-            Refresh
+            Add Popular Tokens
           </button>
         </div>
         
@@ -907,10 +1166,11 @@ export default function WalletPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-[rgb(var(--border-primary))]">
-                    <th className="text-left py-2 px-2">Symbol</th>
-                    <th className="text-left py-2 px-2">Balance</th>
-                    <th className="text-left py-2 px-2 hidden sm:table-cell">Price</th>
-                    <th className="text-left py-2 px-2">USD Value</th>
+                    <th className="text-left py-2 px-2 w-24">Symbol</th>
+                    <th className="text-left py-2 px-2 flex-1">Balance</th>
+                    <th className="text-left py-2 px-2 w-24 hidden sm:table-cell">Price</th>
+                    <th className="text-left py-2 px-2 w-28">USD Value</th>
+                    <th className="text-left py-2 px-2 w-16">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -923,32 +1183,32 @@ export default function WalletPage() {
                     const price = prices[key] || 0;
                     const usdValue = balance * price;
                     
-                                          return (
-                        <tr key={`balance-${key}-${index}`} className="border-b border-[rgb(var(--border-primary))] hover:bg-[rgb(var(--bg-secondary))]">
+                    return (
+                      <tr key={`balance-${key}-${index}`} className="border-b border-[rgb(var(--border-primary))] hover:bg-[rgb(var(--bg-secondary))]">
                         <td className="py-2 px-2">
                           <div>
-                            <span className="font-semibold">{token.symbol}</span>
+                            <span className="font-semibold text-wrap">{token.symbol}</span>
                             {token.name && (
-                              <div className="text-xs text-[rgb(var(--fg-secondary))] hidden sm:block">{token.name}</div>
+                              <div className="text-xs text-[rgb(var(--fg-secondary))] hidden sm:block text-wrap">{token.name}</div>
                             )}
                           </div>
                         </td>
                         <td className="py-2 px-2">
                           <div>
-                            <div className="text-sm sm:text-base">{balance.toFixed(6)}</div>
-                            <div className="text-xs text-[rgb(var(--fg-secondary))] hidden sm:block">{token.address.slice(0, 8)}...{token.address.slice(-6)}</div>
+                            <div className="text-sm sm:text-base font-mono">{balance.toFixed(6)}</div>
+                            <div className="text-xs text-[rgb(var(--fg-secondary))] hidden sm:block text-wrap">{token.address.slice(0, 8)}...{token.address.slice(-6)}</div>
                           </div>
                         </td>
                         <td className="py-2 px-2 hidden sm:table-cell">
                           {price > 0 ? (
-                            <span className="text-green-400">${price.toFixed(4)}</span>
+                            <span className="text-green-400 font-mono">${price.toFixed(4)}</span>
                           ) : (
                             <span className="text-[rgb(var(--fg-secondary))]">—</span>
                           )}
                         </td>
                         <td className="py-2 px-2">
                           {usdValue > 0 ? (
-                            <span className="font-semibold text-blue-400">${usdValue.toFixed(2)}</span>
+                            <span className="font-semibold text-blue-400 font-mono">${usdValue.toFixed(2)}</span>
                           ) : (
                             <span className="text-[rgb(var(--fg-secondary))]">—</span>
                           )}
@@ -957,11 +1217,72 @@ export default function WalletPage() {
                             {price > 0 ? `@ $${price.toFixed(4)}` : ''}
                           </div>
                         </td>
+                        <td className="py-2 px-2 text-center">
+                          <button 
+                            onClick={() => removeToken(token.address)}
+                            className="icon-btn"
+                            title="Remove token from tracking"
+                          >
+                            <IconTrash size={14} />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+          
+          {/* Tracked Tokens with Zero Balance */}
+          {tracked.length > 0 && (
+            <div className="mt-6">
+              <h4 className="text-md font-semibold text-[rgb(var(--fg-primary))] mb-3">Tracked Tokens (No Balance)</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-[rgb(var(--border-primary))]">
+                      <th className="text-left py-2 px-2 w-24">Symbol</th>
+                      <th className="text-left py-2 px-2 flex-1">Name</th>
+                      <th className="text-left py-2 px-2 w-32 hidden sm:table-cell">Address</th>
+                      <th className="text-left py-2 px-2 w-16">Decimals</th>
+                      <th className="text-left py-2 px-2 w-16">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tracked
+                      .filter(token => !balances[token.address] || parseFloat(balances[token.address]) === 0)
+                      .map((token, index) => (
+                        <tr key={`tracked-${token.address}-${index}`} className="border-b border-[rgb(var(--border-primary))] hover:bg-[rgb(var(--bg-secondary))]">
+                          <td className="py-2 px-2">
+                            <span className="font-semibold text-wrap">{token.symbol}</span>
+                          </td>
+                          <td className="py-2 px-2">
+                            <div className="text-wrap text-sm">{token.name}</div>
+                            <div className="text-xs text-[rgb(var(--fg-secondary))] sm:hidden">
+                              {token.address.slice(0, 8)}...{token.address.slice(-6)}
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 hidden sm:table-cell">
+                            <code className="text-xs font-mono text-wrap">
+                              {token.address.slice(0, 8)}...{token.address.slice(-6)}
+                            </code>
+                          </td>
+                          <td className="py-2 px-2 text-center">{token.decimals}</td>
+                          <td className="py-2 px-2 text-center">
+                            <button 
+                              onClick={() => removeToken(token.address)}
+                              className="icon-btn"
+                              title="Remove token from tracking"
+                            >
+                              <IconTrash size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
           
@@ -979,6 +1300,153 @@ export default function WalletPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Market Data */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Market Data</h3>
+          <div className="flex gap-2">
+            <button 
+              onClick={fetchGlobalMarketData}
+              className="btn btn-secondary"
+              disabled={loading}
+            >
+              <IconRefresh size={16} />
+              <span className="hidden sm:inline">Refresh</span>
+            </button>
+            <button 
+              onClick={fetchTrendingData}
+              className="btn btn-secondary"
+              disabled={loading}
+            >
+              <IconRefresh size={16} />
+              <span className="hidden sm:inline">Trending</span>
+            </button>
+          </div>
+        </div>
+        
+        {/* Global Market Statistics */}
+        {globalData && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="p-4 bg-[rgb(var(--bg-tertiary))] rounded-lg">
+              <div className="text-sm text-[rgb(var(--fg-secondary))]">Active Cryptocurrencies</div>
+              <div className="text-xl font-bold">{globalData.active_cryptocurrencies.toLocaleString()}</div>
+            </div>
+            <div className="p-4 bg-[rgb(var(--bg-tertiary))] rounded-lg">
+              <div className="text-sm text-[rgb(var(--fg-secondary))]">Total Market Cap</div>
+              <div className="text-xl font-bold">${(globalData.total_market_cap.usd / 1e9).toFixed(2)}B</div>
+            </div>
+            <div className="p-4 bg-[rgb(var(--bg-tertiary))] rounded-lg">
+              <div className="text-sm text-[rgb(var(--fg-secondary))]">24h Volume</div>
+              <div className="text-xl font-bold">${(globalData.total_volume.usd / 1e9).toFixed(2)}B</div>
+            </div>
+            <div className="p-4 bg-[rgb(var(--bg-tertiary))] rounded-lg">
+              <div className="text-sm text-[rgb(var(--fg-secondary))]">Market Change 24h</div>
+              <div className={`text-xl font-bold ${globalData.market_cap_change_percentage_24h_usd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {globalData.market_cap_change_percentage_24h_usd.toFixed(2)}%
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Trending Coins */}
+        {trendingCoins.length > 0 && (
+          <div className="mb-6">
+            <h4 className="text-md font-semibold text-[rgb(var(--fg-primary))] mb-3">Trending Coins (24h)</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {trendingCoins.slice(0, 6).map((coin) => (
+                <div 
+                  key={coin.id}
+                  className="p-4 bg-[rgb(var(--bg-tertiary))] rounded-lg cursor-pointer hover:bg-[rgb(var(--bg-secondary))] transition-colors"
+                  onClick={() => addCoinGeckoToken(coin)}
+                >
+                  <div className="flex items-center gap-3">
+                    <img 
+                      src={coin.thumb} 
+                      alt={coin.symbol}
+                      className="w-8 h-8 rounded-full"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                    <div className="flex-1">
+                      <div className="font-semibold">{coin.symbol.toUpperCase()}</div>
+                      <div className="text-sm text-[rgb(var(--fg-secondary))]">{coin.name}</div>
+                    </div>
+                    <div className="text-xs text-[rgb(var(--fg-tertiary))]">
+                      Score: {coin.score.toFixed(1)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Enhanced Market Data for Tracked Tokens */}
+        {marketData.length > 0 && (
+          <div>
+            <h4 className="text-md font-semibold text-[rgb(var(--fg-primary))] mb-3">Tracked Tokens Market Data</h4>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-[rgb(var(--border-primary))]">
+                    <th className="text-left py-2 px-2">Token</th>
+                    <th className="text-left py-2 px-2">Price</th>
+                    <th className="text-left py-2 px-2 hidden sm:table-cell">24h Change</th>
+                    <th className="text-left py-2 px-2 hidden lg:table-cell">Market Cap</th>
+                    <th className="text-left py-2 px-2 hidden lg:table-cell">Volume</th>
+                    <th className="text-left py-2 px-2">Rank</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {marketData.map((token) => (
+                    <tr key={token.id} className="border-b border-[rgb(var(--border-primary))] hover:bg-[rgb(var(--bg-secondary))]">
+                      <td className="py-2 px-2">
+                        <div className="flex items-center gap-2">
+                          <img 
+                            src={token.image} 
+                            alt={token.symbol}
+                            className="w-6 h-6 rounded-full"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                          <div>
+                            <div className="font-semibold">{token.symbol.toUpperCase()}</div>
+                            <div className="text-xs text-[rgb(var(--fg-secondary))]">{token.name}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-2 px-2">
+                        <div className="font-semibold">${token.current_price.toFixed(4)}</div>
+                      </td>
+                      <td className="py-2 px-2 hidden sm:table-cell">
+                        <div className={`font-semibold ${token.price_change_percentage_24h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {token.price_change_percentage_24h.toFixed(2)}%
+                        </div>
+                      </td>
+                      <td className="py-2 px-2 hidden lg:table-cell">
+                        <div className="text-sm">
+                          ${(token.market_cap / 1e6).toFixed(0)}M
+                        </div>
+                      </td>
+                      <td className="py-2 px-2 hidden lg:table-cell">
+                        <div className="text-sm">
+                          ${(token.total_volume / 1e6).toFixed(0)}M
+                        </div>
+                      </td>
+                      <td className="py-2 px-2">
+                        <div className="text-sm text-[rgb(var(--fg-secondary))]">#{token.market_cap_rank}</div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Create Wallet Modal */}

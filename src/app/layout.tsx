@@ -41,6 +41,8 @@ const theme = createTheme({
 					maxWidth: '320px',
 					minWidth: '280px',
 					fontSize: '14px',
+					position: 'fixed',
+					zIndex: 9999,
 				},
 				title: {
 					fontSize: '14px',
@@ -89,16 +91,6 @@ export default function RootLayout({
 						containerWidth={320}
 						limit={3}
 						autoClose={5000}
-						styles={{
-							root: {
-								top: '16px !important',
-								left: '16px !important',
-								right: 'auto !important',
-								bottom: 'auto !important',
-								width: '320px !important',
-								maxWidth: 'calc(100vw - 32px) !important',
-							},
-						}}
 					/>
 					<ThemeWrapper>
 						<AppProvider>

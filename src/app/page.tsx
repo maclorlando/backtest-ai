@@ -4,10 +4,11 @@ import { format, subYears } from "date-fns";
 import Image from "next/image";
 import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
 import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
-import { IconChartLine, IconTrendingUp, IconShield, IconZap } from "@tabler/icons-react";
+import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
+import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import PortfolioChart from "@/components/charts/PortfolioChart";
 import ComparisonChart from "@/components/charts/ComparisonChart";
-import AssetAllocationWidget from "@/components/widgets/AssetAllocationWidget";
+import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import DateRangeWidget from "@/components/widgets/DateRangeWidget";
 import RebalancingWidget from "@/components/widgets/RebalancingWidget";
 import SavedPortfoliosWidget from "@/components/widgets/SavedPortfoliosWidget";
@@ -164,7 +165,7 @@ export default function Home() {
     const next = { ...saved, [name]: record };
     setSaved(next);
     localStorage.setItem("bt_portfolios", JSON.stringify(next));
-    showNotification("Saved", `Saved portfolio '${name}'`, "success");
+    showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
   }
 
   const allocationSum = allocations.reduce((s, a) => s + a.allocation, 0);
@@ -192,10 +193,19 @@ export default function Home() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Request failed");
       setResult(data);
+      
+      // Auto-scroll to results section
+      setTimeout(() => {
+        const resultsSection = document.querySelector('.chart-container');
+        if (resultsSection) {
+          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+      
       if (Array.isArray(data?.integrity?.issues) && data.integrity.issues.length > 0) {
-        showNotification("Backtest completed with warnings", `${data.integrity.issues.length} data quality issue(s) detected`, "warning");
+        showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
       } else {
-        showNotification("Backtest", "Completed successfully", "success");
+        showSuccessNotification("Backtest Completed", "Analysis completed successfully");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
@@ -260,7 +270,7 @@ export default function Home() {
       setComparisonData(rows);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
-      showNotification("Compare", msg, "error");
+              showErrorNotification("Comparison Error", msg);
     } finally {
       setComparing(false);
     }
@@ -287,25 +297,7 @@ export default function Home() {
     });
   }, [result, initialCapital, allocations]);
 
-  // Simple notification system
-  const showNotification = (title: string, message: string, type: "success" | "error" | "warning" | "info") => {
-    // Create a simple toast notification
-    const toast = document.createElement("div");
-    toast.className = `fixed top-4 right-4 z-50 p-4 rounded-lg border max-w-sm ${
-      type === "success" ? "bg-green-900 border-green-700 text-green-100" :
-      type === "error" ? "bg-red-900 border-red-700 text-red-100" :
-      type === "warning" ? "bg-yellow-900 border-yellow-700 text-yellow-100" :
-      "bg-blue-900 border-blue-700 text-blue-100"
-    }`;
-    toast.innerHTML = `
-      <div class="font-semibold">${title}</div>
-      <div class="text-sm opacity-90">${message}</div>
-    `;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.remove();
-    }, 5000);
-  };
+
 
   const handleLoadPortfolio = (cfg: SavedRecord) => {
     setAllocations([...cfg.allocations]);
@@ -315,7 +307,12 @@ export default function Home() {
     setPeriodDays(cfg.periodDays ?? 30);
     setThresholdPct(cfg.thresholdPct ?? 5);
     setInitialCapital(cfg.initialCapital ?? 100);
-    showNotification("Loaded", `Loaded '${cfg.start}'`, "success");
+    showSuccessNotification("Portfolio Loaded", `Loaded portfolio configuration`);
+  };
+
+  const handleLoadPortfolioAllocations = (allocations: AllocationRow[]) => {
+    setAllocations([...allocations]);
+    showSuccessNotification("Portfolio Loaded", `Loaded portfolio allocations`);
   };
 
   return (
@@ -327,21 +324,6 @@ export default function Home() {
           Test your crypto investment strategies with historical data. Analyze performance, 
           optimize allocations, and make data-driven decisions.
         </p>
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <button 
-            onClick={run} 
-            disabled={Math.abs(allocationSum - 1) > 1e-4 || loading}
-            className="btn btn-primary"
-          >
-            {loading ? "Running..." : "Start Backtest"}
-          </button>
-          <button 
-            onClick={() => setAllocations([{ id: "usd-coin", allocation: 0.8 }, { id: "bitcoin", allocation: 0.2 }])}
-            className="btn btn-secondary"
-          >
-            Reset to Default
-          </button>
-        </div>
       </section>
 
       {/* Stats Cards */}
@@ -366,12 +348,25 @@ export default function Home() {
 
       {/* Main Widgets */}
       <section className="widget-grid">
-        <AssetAllocationWidget
+        <PortfolioBuilder
           allocations={allocations}
           setAllocations={setAllocations}
           spot={spot}
+          logos={logos}
+          initialCapital={initialCapital}
+          setInitialCapital={setInitialCapital}
           onSave={saveCurrentPortfolio}
           allocationSum={allocationSum}
+          onLoadPortfolio={handleLoadPortfolioAllocations}
+        />
+
+        <SavedPortfoliosWidget
+          saved={saved}
+          setSaved={setSaved}
+          onLoadPortfolio={handleLoadPortfolio}
+          onCompareAll={compareAll}
+          mounted={mounted}
+          logos={logos}
         />
 
         <DateRangeWidget
@@ -379,8 +374,6 @@ export default function Home() {
           setStart={setStart}
           end={end}
           setEnd={setEnd}
-          initialCapital={initialCapital}
-          setInitialCapital={setInitialCapital}
         />
 
         <RebalancingWidget
@@ -390,19 +383,54 @@ export default function Home() {
           setPeriodDays={setPeriodDays}
           thresholdPct={thresholdPct}
           setThresholdPct={setThresholdPct}
-          onRun={run}
           loading={loading}
           error={error}
           allocationSum={allocationSum}
         />
+      </section>
 
-        <SavedPortfoliosWidget
-          saved={saved}
-          setSaved={setSaved}
-          onLoadPortfolio={handleLoadPortfolio}
-          onCompareAll={compareAll}
-          mounted={mounted}
-        />
+      {/* Standalone Run Button */}
+      <section className="flex justify-center">
+        <div className="card max-w-md w-full">
+          <div className="text-center space-y-4">
+            <div>
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Ready to Backtest?</h3>
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">
+                Configure your portfolio, date range, and rebalancing strategy above
+              </p>
+            </div>
+            
+            <button 
+              onClick={run} 
+              disabled={Math.abs(allocationSum - 1) > 1e-4 || loading}
+              className="btn btn-primary btn-lg w-full"
+            >
+              {loading ? (
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Running Backtest...
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <IconChartLine size={20} />
+                  Run Backtest
+                </div>
+              )}
+            </button>
+            
+            {error && (
+              <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg text-red-300 text-sm">
+                {error}
+              </div>
+            )}
+            
+            {Math.abs(allocationSum - 1) > 1e-4 && (
+              <div className="p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
+                ⚠️ Portfolio allocation is not 100%. Current allocation: {(allocationSum * 100).toFixed(1)}%
+              </div>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Comparison Chart */}

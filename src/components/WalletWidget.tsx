@@ -19,7 +19,7 @@ import { generateWallet, encryptSecret, decryptSecret } from "@/lib/wallet/crypt
 import { buildPublicClientWithFallback } from "@/lib/wallet/viem";
 import { formatEther } from "viem";
 import { readErc20Balance } from "@/lib/evm/erc20";
-import { showErrorNotification, showSuccessNotification } from "@/lib/utils/errorHandling";
+import { showErrorNotification, showSuccessNotification, showInfoNotification } from "@/lib/utils/errorHandling";
 import { useApp } from "@/lib/context/AppContext";
 
 // Supported mainnet chains only
@@ -40,7 +40,7 @@ interface WalletInfo {
 }
 
 export default function WalletWidget() {
-  const { currentWallet, currentNetwork, setCurrentWallet, setCurrentNetwork } = useApp();
+  const { currentWallet, currentNetwork, setCurrentWallet, setCurrentNetwork, removeWallet } = useApp();
   const [balance, setBalance] = useState<string>("0");
   const [isConnecting, setIsConnecting] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -68,12 +68,62 @@ export default function WalletWidget() {
     }
   }, [currentWallet, setCurrentWallet]);
 
+  // Refresh available wallets when current wallet changes
+  useEffect(() => {
+    loadAvailableWallets();
+  }, [currentWallet]);
+
   // Load balance when wallet or network changes
   useEffect(() => {
     if (currentWallet) {
       loadBalance();
     }
   }, [currentWallet, currentNetwork]);
+
+  // Listen for external wallet connection changes
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.ethereum) return;
+
+    const handleAccountsChanged = (accounts: string[]) => {
+      if (currentWalletType === "external") {
+        if (accounts.length === 0) {
+          // User disconnected their wallet
+          setCurrentWallet(null);
+          setCurrentWalletType(null);
+          setBalance("0");
+          showInfoNotification("External wallet disconnected", "Wallet Disconnected");
+        } else if (accounts[0] !== currentWallet) {
+          // User switched accounts
+          setCurrentWallet(accounts[0]);
+          showSuccessNotification("Switched to different account", "Account Switched");
+        }
+      }
+    };
+
+    const handleChainChanged = () => {
+      // Reload the page when chain changes to ensure proper state
+      window.location.reload();
+    };
+
+    const handleDisconnect = () => {
+      if (currentWalletType === "external") {
+        setCurrentWallet(null);
+        setCurrentWalletType(null);
+        setBalance("0");
+        showInfoNotification("External wallet disconnected", "Wallet Disconnected");
+      }
+    };
+
+    window.ethereum.on('accountsChanged', handleAccountsChanged);
+    window.ethereum.on('chainChanged', handleChainChanged);
+    window.ethereum.on('disconnect', handleDisconnect);
+
+    return () => {
+      window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+      window.ethereum.removeListener('chainChanged', handleChainChanged);
+      window.ethereum.removeListener('disconnect', handleDisconnect);
+    };
+  }, [currentWallet, currentWalletType]);
 
   function loadAvailableWallets() {
     const wallets: WalletInfo[] = [];
@@ -199,12 +249,39 @@ export default function WalletWidget() {
   }
 
   function disconnectWallet() {
+    // Clear the wallet from localStorage if it's a local wallet
+    if (currentWalletType === "local") {
+      clearWallet();
+    }
+    
+    // For external wallets, we need to disconnect from the provider
+    if (currentWalletType === "external" && typeof window !== 'undefined' && window.ethereum) {
+      // Note: Most wallets don't support programmatic disconnection
+      // We just clear our local state
+    }
+    
     setCurrentWallet(null);
     setCurrentWalletType(null);
     setBalance("0");
     setShowMenu(false);
+    
+    // Notify AppContext to remove wallet
+    removeWallet();
+    
+    // Refresh available wallets list
+    loadAvailableWallets();
+    
     showSuccessNotification("Wallet disconnected", "Wallet Disconnected");
   }
+
+  // Function to handle wallet removal from other parts of the app
+  useEffect(() => {
+    if (!currentWallet) {
+      setCurrentWalletType(null);
+      setBalance("0");
+      loadAvailableWallets();
+    }
+  }, [currentWallet]);
 
   function copyAddress() {
     if (currentWallet) {

@@ -8,7 +8,6 @@ interface RebalancingWidgetProps {
   setPeriodDays: (days: number) => void;
   thresholdPct: number;
   setThresholdPct: (pct: number) => void;
-  onRun: () => void;
   loading: boolean;
   error: string | null;
   allocationSum: number;
@@ -21,13 +20,12 @@ export default function RebalancingWidget({
   setPeriodDays,
   thresholdPct,
   setThresholdPct,
-  onRun,
   loading,
   error,
   allocationSum
 }: RebalancingWidgetProps) {
   return (
-    <div className="card">
+    <div className="card widget-compact">
       <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Rebalancing</h3>
       
       <div className="space-y-4">
@@ -69,14 +67,6 @@ export default function RebalancingWidget({
             />
           </div>
         )}
-        
-        <button
-          onClick={onRun}
-          disabled={Math.abs(allocationSum - 1) > 1e-4 || loading}
-          className="btn btn-primary w-full"
-        >
-          {loading ? "Running Backtest..." : "Run Backtest"}
-        </button>
         
         {error && (
           <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg text-red-300 text-sm">
