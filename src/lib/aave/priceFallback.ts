@@ -36,7 +36,7 @@ export function getFallbackPriceByAddress(address: string): number {
   // Common token addresses and their symbols
   const addressToSymbol: Record<string, string> = {
     // USDC addresses
-    "0xa0b86a33e6441b8c4c8c8c8c8c8c8c8c8c8c8c8": "USDC",
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": "USDC",
     "0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f": "USDC", // Base Sepolia
     
     // USDT addresses

@@ -7,6 +7,7 @@ interface AppContextType {
   currentNetwork: number;
   setCurrentWallet: (address: string | null) => void;
   setCurrentNetwork: (chainId: number) => void;
+  removeWallet: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -23,12 +24,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const removeWallet = () => {
+    setCurrentWallet(null);
+  };
+
   return (
     <AppContext.Provider value={{
       currentWallet,
       currentNetwork,
       setCurrentWallet,
       setCurrentNetwork,
+      removeWallet,
     }}>
       {children}
     </AppContext.Provider>

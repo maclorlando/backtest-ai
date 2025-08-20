@@ -1,0 +1,310 @@
+"use client";
+import React, { useState, useEffect } from "react";
+import Image from "next/image";
+import { ASSET_ID_TO_SYMBOL, type AssetId } from "@/lib/types";
+import { IconPlus, IconX, IconDeviceFloppy, IconTrash } from "@tabler/icons-react";
+
+type AllocationRow = { id: AssetId; allocation: number };
+
+interface PortfolioBuilderProps {
+  allocations: AllocationRow[];
+  setAllocations: (allocations: AllocationRow[]) => void;
+  spot: Record<string, number>;
+  logos: Record<string, string>;
+  initialCapital: number;
+  setInitialCapital: (capital: number) => void;
+  onSave: () => void;
+  allocationSum: number;
+  onLoadPortfolio?: (allocations: AllocationRow[]) => void;
+}
+
+export default function PortfolioBuilder({
+  allocations,
+  setAllocations,
+  spot,
+  logos,
+  initialCapital,
+  setInitialCapital,
+  onSave,
+  allocationSum,
+  onLoadPortfolio
+}: PortfolioBuilderProps) {
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [tempAllocation, setTempAllocation] = useState<string>("");
+
+  const totalValue = initialCapital * allocationSum;
+
+  const addAsset = () => {
+    setAllocations([...allocations, { id: "bitcoin", allocation: 0 }]);
+  };
+
+  const removeAsset = (index: number) => {
+    setAllocations(allocations.filter((_, i) => i !== index));
+    setEditingIndex(null);
+  };
+
+  const updateAsset = (index: number, field: 'id' | 'allocation', value: AssetId | number) => {
+    const copy = [...allocations];
+    copy[index] = { ...copy[index], [field]: value };
+    setAllocations(copy);
+  };
+
+  const startEditing = (index: number) => {
+    setEditingIndex(index);
+    setTempAllocation((allocations[index].allocation * 100).toFixed(1));
+  };
+
+  const saveEditing = (index: number) => {
+    const newAllocation = parseFloat(tempAllocation) / 100;
+    if (!isNaN(newAllocation) && newAllocation >= 0 && newAllocation <= 1) {
+      updateAsset(index, 'allocation', newAllocation);
+    }
+    setEditingIndex(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingIndex(null);
+  };
+
+  const handleAllocationChange = (index: number, value: string) => {
+    setTempAllocation(value);
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue) && numValue >= 0 && numValue <= 100) {
+      // Calculate how much allocation is available (excluding current asset)
+      const otherAllocations = allocations.reduce((sum, asset, i) => 
+        i === index ? sum : sum + asset.allocation, 0
+      );
+      const maxAllowed = Math.max(0, 1 - otherAllocations);
+      const clampedValue = Math.min(numValue / 100, maxAllowed);
+      setTempAllocation((clampedValue * 100).toFixed(1));
+    }
+  };
+
+  const availableAssets: AssetId[] = [
+    "bitcoin", "ethereum", "solana", "usd-coin", "tether", 
+    "pepe", "polkadot", "aave", "chainlink", "fartcoin"
+  ];
+
+  return (
+    <div className="card widget-full">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Portfolio Builder</h3>
+        <div className="text-right">
+          <div className="text-sm text-[rgb(var(--fg-secondary))]">Total Value</div>
+          <div className="text-lg font-semibold text-[rgb(var(--fg-primary))]">${totalValue.toFixed(2)}</div>
+        </div>
+      </div>
+
+      {/* Portfolio Composition Display */}
+      <div className="space-y-3 mb-6">
+        {allocations.length === 0 ? (
+          <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
+            No assets selected. Add assets to build your portfolio.
+          </div>
+        ) : (
+          allocations.map((asset, index) => {
+            const symbol = ASSET_ID_TO_SYMBOL[asset.id];
+            const currentPrice = spot[asset.id] || 0;
+            const allocationValue = initialCapital * asset.allocation;
+            const allocationPercentage = (asset.allocation * 100).toFixed(1);
+            const logo = logos[asset.id];
+            const isEditing = editingIndex === index;
+
+            return (
+              <div key={`${asset.id}-${index}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] gap-3">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  {/* Asset Logo */}
+                  <div className="w-8 h-8 rounded-full overflow-hidden bg-[rgb(var(--bg-tertiary))] flex items-center justify-center flex-shrink-0">
+                    {logo ? (
+                      <Image
+                        src={logo}
+                        alt={symbol}
+                        width={24}
+                        height={24}
+                        className="w-6 h-6"
+                      />
+                    ) : (
+                      <div className="w-6 h-6 bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center">
+                        <span className="text-xs font-semibold text-white">
+                          {symbol.charAt(0)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Asset Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                      <span className="font-semibold text-[rgb(var(--fg-primary))] truncate">
+                        {symbol}
+                      </span>
+                      <span className="text-xs text-[rgb(var(--fg-tertiary))] hidden sm:inline">
+                        {asset.id}
+                      </span>
+                    </div>
+                    <div className="text-sm text-[rgb(var(--fg-secondary))]">
+                      ${currentPrice.toFixed(4)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Allocation Controls */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {isEditing ? (
+                    <>
+                      <input
+                        type="number"
+                        value={tempAllocation}
+                        onChange={(e) => handleAllocationChange(index, e.target.value)}
+                        onBlur={() => saveEditing(index)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') saveEditing(index);
+                          if (e.key === 'Escape') cancelEditing();
+                        }}
+                        min="0"
+                        max="100"
+                        step="0.1"
+                        className="input w-16 text-center text-sm"
+                        autoFocus
+                      />
+                      <span className="text-sm text-[rgb(var(--fg-secondary))]">%</span>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => startEditing(index)}
+                        className="font-semibold text-[rgb(var(--fg-primary))] text-lg hover:text-[rgb(var(--accent-primary))] transition-colors"
+                      >
+                        {allocationPercentage}%
+                      </button>
+                      {currentPrice > 0 && (
+                        <div className="text-sm text-[rgb(var(--fg-secondary))]">
+                          ${allocationValue.toFixed(2)}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  
+                  {/* Remove Button */}
+                  <button
+                    onClick={() => removeAsset(index)}
+                    className="icon-btn text-red-400 hover:text-red-300"
+                    title="Remove Asset"
+                  >
+                    <IconTrash size={16} />
+                  </button>
+                </div>
+
+                {/* Allocation Progress Bar */}
+                <div className="w-full sm:w-20 h-2 bg-[rgb(var(--bg-tertiary))] rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-[rgb(var(--accent-primary))] rounded-full transition-all duration-300"
+                    style={{ width: `${asset.allocation * 100}%` }}
+                  />
+                </div>
+
+                {currentPrice > 0 && (
+                  <div className="text-xs text-[rgb(var(--fg-tertiary))] mt-1">
+                    {(allocationValue / currentPrice).toFixed(4)} {symbol}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Quick Actions Section */}
+      <div className="mb-4 space-y-3">
+        {/* Add Asset Section */}
+        <div className="p-3 bg-[rgb(var(--bg-tertiary))] rounded-lg border border-[rgb(var(--border-primary))]">
+          <div className="flex items-center gap-3">
+            <select
+              value=""
+              onChange={(e) => {
+                const selectedId = e.target.value as AssetId;
+                if (selectedId) {
+                  setAllocations([...allocations, { id: selectedId, allocation: 0 }]);
+                  e.target.value = "";
+                }
+              }}
+              className="input flex-1"
+            >
+              <option value="">Select an asset to add...</option>
+              {availableAssets
+                .filter(assetId => !allocations.some(existing => existing.id === assetId))
+                .map((id) => (
+                  <option key={id} value={id}>
+                    {ASSET_ID_TO_SYMBOL[id]} - ${spot[id]?.toFixed(4) || "0.0000"}
+                  </option>
+                ))}
+            </select>
+            <button
+              onClick={addAsset}
+              className="icon-btn"
+              title="Add Asset"
+            >
+              <IconPlus size={16} />
+            </button>
+          </div>
+        </div>
+
+
+      </div>
+
+      {/* Portfolio Summary */}
+      <div className="mt-4 pt-4 border-t border-[rgb(var(--border-primary))]">
+        <div className="grid grid-cols-2 gap-4 text-sm mb-3">
+          <div>
+            <div className="text-[rgb(var(--fg-secondary))]">Total Allocation</div>
+            <div className={`font-semibold ${Math.abs(allocationSum - 1) > 1e-4 ? 'text-red-400' : 'text-green-400'}`}>
+              {(allocationSum * 100).toFixed(1)}%
+            </div>
+          </div>
+          <div>
+            <div className="text-[rgb(var(--fg-secondary))]">Assets</div>
+            <div className="font-semibold text-[rgb(var(--fg-primary))]">
+              {allocations.length}
+            </div>
+          </div>
+        </div>
+
+        <div className="mb-3">
+          <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Initial Capital ($)</label>
+          <input
+            type="number"
+            value={initialCapital}
+            onChange={(e) => setInitialCapital(Number(e.target.value) || 100)}
+            min={1}
+            className="input w-full"
+          />
+        </div>
+
+        {Math.abs(allocationSum - 1) > 1e-4 && (
+          <div className="mb-3 p-2 bg-red-900/20 border border-red-700 rounded-lg">
+            <div className="text-xs text-red-300">
+              ⚠️ Portfolio allocation is not 100%. Current allocation: {(allocationSum * 100).toFixed(1)}%
+            </div>
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => setAllocations([{ id: "usd-coin", allocation: 0.8 }, { id: "bitcoin", allocation: 0.2 }])}
+            className="btn btn-secondary flex-1"
+          >
+            Reset to Default
+          </button>
+          <button
+            onClick={onSave}
+            className="btn btn-primary flex-1"
+            disabled={Math.abs(allocationSum - 1) > 1e-4}
+          >
+            <IconDeviceFloppy size={16} />
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

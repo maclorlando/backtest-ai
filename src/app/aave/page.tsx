@@ -5,7 +5,7 @@ import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { getAaveConfig, mapAssetIdToAaveSymbol } from "@/lib/aave/config";
 import { buildPublicClient, buildPublicClientWithFallback, buildWalletClient } from "@/lib/wallet/viem";
 import { loadWallet } from "@/lib/wallet/storage";
-import { checkAndApproveErc20, supplyToAave, testAaveConnection, getPoolInfo, getUserPositions, supplyAssetWithSDK, borrowAssetWithSDK } from "@/lib/aave/viem";
+import { checkAndApproveErc20, supplyToAave, getPoolInfo, getUserPositions, supplyAssetWithSDK, borrowAssetWithSDK } from "@/lib/aave/viem";
 import { getSupportedNetworks, fetchAllPoolData } from "@/lib/aave/poolData";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation } from "@/lib/utils/errorHandling";
 import { AaveErrorHandler, parseAaveError, type AaveErrorInfo } from "@/components/AaveErrorHandler";
@@ -14,6 +14,9 @@ import { Address, formatEther, parseEther } from "viem";
 import { readErc20Balance } from "@/lib/evm/erc20";
 import StatusCard, { StatusType } from "@/components/StatusCard";
 import { useApp } from "@/lib/context/AppContext";
+
+// Import mock data function for fallback
+import { getMockPoolDataForChain } from "@/lib/aave/marketData";
 
 type SavedRecord = {
   allocations: { id: AssetId; allocation: number }[];
@@ -33,7 +36,7 @@ export default function AavePage() {
   const [positions, setPositions] = useState<AaveUserPosition[]>([]);
   const [userSummary, setUserSummary] = useState<AaveUserSummary | null>(null);
   const [poolInfo, setPoolInfo] = useState<AavePoolInfo[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "testing">("disconnected");
+
   const [supplyAmount, setSupplyAmount] = useState<string>("");
   const [selectedAsset, setSelectedAsset] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"positions" | "deploy" | "supply">("positions");
@@ -189,43 +192,7 @@ export default function AavePage() {
     }
   }
 
-  async function testConnection() {
-    try {
-      setConnectionStatus("testing");
-      setLoading(true);
-      showInfoNotification(
-        "Testing connection to Aave...",
-        "Testing"
-      );
-      
-      const isConnected = await retryOperation(
-        () => testAaveConnection(),
-        3, // max retries
-        1000 // delay
-      );
-      
-      if (isConnected) {
-        setConnectionStatus("connected");
-        showSuccessNotification(
-          "Successfully connected to Aave",
-          "Connection Successful"
-        );
-      } else {
-        setConnectionStatus("disconnected");
-        showErrorNotification(
-          new Error("Failed to connect to Aave"),
-          "Connection Failed"
-        );
-      }
-    } catch (error) {
-      setConnectionStatus("disconnected");
-      const aaveError = parseAaveError(error, { chainId });
-      setCurrentError(aaveError);
-      showErrorNotification(error, "Connection Test Failed");
-    } finally {
-      setLoading(false);
-    }
-  }
+
 
   async function getNetworkStats() {
     try {
@@ -271,44 +238,75 @@ export default function AavePage() {
         "Fetching"
       );
       
+      console.log(`=== Starting fetchPoolPrices for chain ${chainId} ===`);
+      
+      // Add timeout protection for the entire operation
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Request timeout - rate limit may have been hit')), 30000);
+      });
+      
       // Use the new market data function to fetch all pool data at once
-      const poolData = await retryOperation(
+      const poolDataPromise = retryOperation(
         () => fetchAllPoolData(chainId),
-        3, // max retries
-        1000 // delay
+        2, // reduced retries to avoid rate limiting
+        2000 // increased delay between retries
       );
       
-      console.log("Raw pool data received:", poolData);
+      const poolData = await Promise.race([poolDataPromise, timeoutPromise]) as AavePoolInfo[];
+      
+      console.log(`=== Raw pool data received for chain ${chainId}:`, poolData);
+      console.log(`=== Data type:`, typeof poolData);
+      console.log(`=== Array length:`, Array.isArray(poolData) ? poolData.length : 'Not an array');
       
       // Validate the data structure
-      if (poolData && poolData.length > 0) {
-        console.log("First pool data item:", poolData[0]);
-        console.log("APY values check:");
+      if (poolData && Array.isArray(poolData) && poolData.length > 0) {
+        console.log(`=== First pool data item:`, poolData[0]);
+        console.log(`=== APY values check for chain ${chainId}:`);
         poolData.forEach((pool, index) => {
-          console.log(`${pool.symbol}: supplyAPY=${pool.supplyAPY}, borrowAPY=${pool.borrowAPY}, utilizationRate=${pool.utilizationRate}`);
+          console.log(`${index + 1}. ${pool.symbol}: supplyAPY=${pool.supplyAPY}, borrowAPY=${pool.borrowAPY}, utilizationRate=${pool.utilizationRate}`);
           console.log(`  - supplyAPY type: ${typeof pool.supplyAPY}, isNaN: ${isNaN(pool.supplyAPY)}`);
           console.log(`  - borrowAPY type: ${typeof pool.borrowAPY}, isNaN: ${isNaN(pool.borrowAPY)}`);
           console.log(`  - utilizationRate type: ${typeof pool.utilizationRate}, isNaN: ${isNaN(pool.utilizationRate)}`);
         });
-      }
-      
-      setPoolInfo(poolData);
-      
-      if (poolData.length > 0) {
+        
+        setPoolInfo(poolData);
         showSuccessNotification(
           `Fetched information for ${poolData.length} pools on ${CHAINS[chainId]?.name || `Chain ${chainId}`}`,
           "Market Data Updated"
         );
       } else {
+        console.log(`=== No valid pool data received for chain ${chainId}, using mock data`);
+        // Always set some data to ensure table renders
+        const mockData = getMockPoolDataForChain(chainId);
+        setPoolInfo(mockData);
         showInfoNotification(
-          `No pool data available for ${CHAINS[chainId]?.name || `Chain ${chainId}`}. This network may not support Aave or may be using testnet data.`,
-          "No Data Available"
+          `Using mock data for ${CHAINS[chainId]?.name || `Chain ${chainId}`}. Real data may be temporarily unavailable due to rate limits.`,
+          "Using Mock Data"
         );
       }
     } catch (error) {
+      console.error(`=== Error in fetchPoolPrices for chain ${chainId}:`, error);
+      
+      // Always set some data to ensure table renders
+      const mockData = getMockPoolDataForChain(chainId);
+      setPoolInfo(mockData);
+      
       const aaveError = parseAaveError(error, { chainId });
       setCurrentError(aaveError);
-      showErrorNotification(error, "Failed to fetch pool data");
+      
+      // Show appropriate error message based on error type
+      if (error instanceof Error) {
+        if (error.message.includes('timeout') || error.message.includes('rate limit')) {
+          showErrorNotification(
+            new Error(`Rate limit exceeded for ${CHAINS[chainId]?.name || `Chain ${chainId}`}. Using mock data instead.`),
+            "Rate Limited"
+          );
+        } else {
+          showErrorNotification(error, "Failed to fetch pool data");
+        }
+      } else {
+        showErrorNotification(error, "Failed to fetch pool data");
+      }
     } finally {
       setLoading(false);
     }
@@ -421,37 +419,7 @@ export default function AavePage() {
             >
               Refresh Market Data
             </button>
-            <button
-              onClick={async () => {
-                try {
-                  setLoading(true);
-                  const { fetchRealAaveMarketData } = await import("@/lib/aave/marketData");
-                  const realData = await fetchRealAaveMarketData(chainId);
-                  console.log("Test real data fetch result:", realData);
-                  if (realData && realData.length > 0) {
-                    setPoolInfo(realData);
-                    showSuccessNotification(
-                      `Successfully fetched ${realData.length} real reserves from Aave V3`,
-                      "Real Data Test"
-                    );
-                  } else {
-                    showInfoNotification(
-                      "No real data available, falling back to mock data",
-                      "Real Data Test"
-                    );
-                  }
-                } catch (error) {
-                  console.error("Real data test failed:", error);
-                  showErrorNotification(error, "Real Data Test Failed");
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              disabled={loading}
-              className="btn btn-secondary"
-            >
-              Test Real Data
-            </button>
+
             <button 
               onClick={refreshPositions}
               disabled={loading}
@@ -469,12 +437,8 @@ export default function AavePage() {
         error={currentError}
         onRetry={() => {
           setCurrentError(null);
-          // Retry the last operation based on context
-          if (connectionStatus === "testing") {
-            testConnection();
-          } else {
-            fetchPoolPrices();
-          }
+          // Retry the last operation
+          fetchPoolPrices();
         }}
         onDismiss={() => setCurrentError(null)}
       />
@@ -642,8 +606,8 @@ export default function AavePage() {
                           <td className="py-2 px-2">
                             <span className="font-semibold">{pool.symbol}</span>
                           </td>
-                          <td className="py-2 px-2">{pool.totalSupply}</td>
-                          <td className="py-2 px-2">{pool.totalBorrow}</td>
+                          <td className="py-2 px-2">{typeof pool.totalSupply === 'string' ? pool.totalSupply : '0'}</td>
+                          <td className="py-2 px-2">{typeof pool.totalBorrow === 'string' ? pool.totalBorrow : '0'}</td>
                           <td className="py-2 px-2">
                             {isNaN(pool.supplyAPY) || pool.supplyAPY === 0 ? 
                               "N/A" : `${pool.supplyAPY.toFixed(2)}%`

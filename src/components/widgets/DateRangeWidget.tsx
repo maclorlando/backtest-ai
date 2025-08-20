@@ -7,17 +7,13 @@ interface DateRangeWidgetProps {
   setStart: (start: string) => void;
   end: string;
   setEnd: (end: string) => void;
-  initialCapital: number;
-  setInitialCapital: (capital: number) => void;
 }
 
 export default function DateRangeWidget({
   start,
   setStart,
   end,
-  setEnd,
-  initialCapital,
-  setInitialCapital
+  setEnd
 }: DateRangeWidgetProps) {
   const presets = [
     { label: "1Y", years: 1 },
@@ -33,7 +29,7 @@ export default function DateRangeWidget({
   };
 
   return (
-    <div className="card">
+    <div className="card widget-compact">
       <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Date Range</h3>
       
       <div className="space-y-4">
@@ -53,17 +49,6 @@ export default function DateRangeWidget({
             type="date"
             value={end}
             onChange={(e) => setEnd(e.target.value)}
-            className="input w-full"
-          />
-        </div>
-        
-        <div>
-          <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Initial Capital</label>
-          <input
-            type="number"
-            value={initialCapital}
-            onChange={(e) => setInitialCapital(Number(e.target.value) || 100)}
-            min={1}
             className="input w-full"
           />
         </div>

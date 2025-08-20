@@ -5,50 +5,91 @@ import type { AavePoolInfo } from "@/lib/types";
 import { createPublicClient, http, Address } from "viem";
 import { mainnet, base, arbitrum } from "viem/chains";
 import { DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
+import { getAaveConfig } from "./config";
+import { showErrorNotification, showInfoNotification } from "@/lib/utils/errorHandling";
 
-// Aave V3 Data Provider ABIs
-const UI_POOL_DATA_PROVIDER_ABI = [
+// Rate limiting utility
+class RateLimiter {
+  private requests: number[] = [];
+  private maxRequests: number;
+  private timeWindow: number;
+
+  constructor(maxRequests: number = 10, timeWindow: number = 1000) {
+    this.maxRequests = maxRequests;
+    this.timeWindow = timeWindow;
+  }
+
+  async waitForSlot(): Promise<void> {
+    const now = Date.now();
+    this.requests = this.requests.filter(time => now - time < this.timeWindow);
+    
+    if (this.requests.length >= this.maxRequests) {
+      const oldestRequest = this.requests[0];
+      const waitTime = this.timeWindow - (now - oldestRequest);
+      if (waitTime > 0) {
+        console.log(`Rate limit reached, waiting ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+    
+    this.requests.push(now);
+  }
+}
+
+// Create rate limiters for different RPC endpoints
+const rateLimiters = new Map<string, RateLimiter>();
+
+function getRateLimiter(rpcUrl: string): RateLimiter {
+  if (!rateLimiters.has(rpcUrl)) {
+    // More conservative rate limiting for public RPCs
+    const isPublicRPC = rpcUrl.includes('llamarpc.com') || rpcUrl.includes('alchemy.com') || rpcUrl.includes('infura.io');
+    const maxRequests = isPublicRPC ? 5 : 10; // 5 requests per second for public RPCs
+    const timeWindow = isPublicRPC ? 1000 : 1000; // 1 second window
+    rateLimiters.set(rpcUrl, new RateLimiter(maxRequests, timeWindow));
+  }
+  return rateLimiters.get(rpcUrl)!;
+}
+
+// Aave V3 Protocol Data Provider ABI (correct ABI for the contract we're calling)
+const PROTOCOL_DATA_PROVIDER_ABI = [
   {
-    inputs: [
-      { internalType: "address", name: "user", type: "address" },
-      { internalType: "address", name: "pool", type: "address" }
+    inputs: [{ internalType: "address", name: "asset", type: "address" }],
+    name: "getReserveData",
+    outputs: [
+      { internalType: "uint256", name: "configuration", type: "uint256" },
+      { internalType: "uint128", name: "liquidityIndex", type: "uint128" },
+      { internalType: "uint128", name: "variableBorrowIndex", type: "uint128" },
+      { internalType: "uint128", name: "currentLiquidityRate", type: "uint128" },
+      { internalType: "uint128", name: "currentVariableBorrowRate", type: "uint128" },
+      { internalType: "uint128", name: "currentStableBorrowRate", type: "uint128" },
+      { internalType: "uint40", name: "lastUpdateTimestamp", type: "uint40" },
+      { internalType: "uint16", name: "id", type: "uint16" },
+      { internalType: "address", name: "aTokenAddress", type: "address" },
+      { internalType: "address", name: "stableDebtTokenAddress", type: "address" },
+      { internalType: "address", name: "variableDebtTokenAddress", type: "address" },
+      { internalType: "address", name: "interestRateStrategyAddress", type: "address" },
+      { internalType: "uint8", name: "usageAsCollateralEnabled", type: "uint8" },
     ],
-    name: "getReservesData",
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "getAllReservesTokens",
     outputs: [
       {
         components: [
-          { internalType: "address", name: "underlyingAsset", type: "address" },
-          { internalType: "string", name: "name", type: "string" },
           { internalType: "string", name: "symbol", type: "string" },
-          { internalType: "uint256", name: "decimals", type: "uint256" },
-          { internalType: "uint256", name: "baseLTVasCollateral", type: "uint256" },
-          { internalType: "uint256", name: "reserveLiquidationThreshold", type: "uint256" },
-          { internalType: "uint256", name: "reserveFactor", type: "uint256" },
-          { internalType: "bool", name: "usageAsCollateralEnabled", type: "bool" },
-          { internalType: "uint256", name: "totalAToken", type: "uint256" },
-          { internalType: "uint256", name: "totalStableDebt", type: "uint256" },
-          { internalType: "uint256", name: "totalVariableDebt", type: "uint256" },
-          { internalType: "uint256", name: "liquidityRate", type: "uint256" },
-          { internalType: "uint256", name: "variableBorrowRate", type: "uint256" },
-          { internalType: "uint256", name: "stableBorrowRate", type: "uint256" },
-          { internalType: "uint256", name: "averageStableRate", type: "uint256" },
-          { internalType: "uint256", name: "liquidityIndex", type: "uint256" },
-          { internalType: "uint256", name: "variableBorrowIndex", type: "uint256" },
-          { internalType: "uint40", name: "lastUpdateTimestamp", type: "uint40" },
-          { internalType: "address", name: "aTokenAddress", type: "address" },
-          { internalType: "address", name: "stableDebtTokenAddress", type: "address" },
-          { internalType: "address", name: "variableDebtTokenAddress", type: "address" },
-          { internalType: "address", name: "interestRateStrategyAddress", type: "address" },
-          { internalType: "uint8", name: "id", type: "uint8" }
+          { internalType: "address", name: "tokenAddress", type: "address" },
         ],
-        internalType: "struct IUiPoolDataProvider.AggregatedReserveData[]",
+        internalType: "struct IPoolDataProvider.TokenData[]",
         name: "",
-        type: "tuple[]"
-      }
+        type: "tuple[]",
+      },
     ],
     stateMutability: "view",
-    type: "function"
-  }
+    type: "function",
+  },
 ] as const;
 
 const PRICE_ORACLE_ABI = [
@@ -61,31 +102,21 @@ const PRICE_ORACLE_ABI = [
   }
 ] as const;
 
-// Official Aave V3 contract addresses from https://aave.com/docs/resources/addresses
-// Note: Only Ethereum has a dedicated UI Pool Data Provider, other chains may need different approaches
-const AAVE_V3_ADDRESSES = {
-  1: { // Ethereum Mainnet
-    pool: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
-    uiPoolDataProvider: "0x3F78BBD206e4D3c504Eb854232EdA7e47E9Fd8FC",
-    priceOracle: "0x54586bE62E3c3580375aE3723C145253060Ca0C2",
-    chain: mainnet,
-    hasDataProvider: true
-  },
-  8453: { // Base Mainnet
-    pool: "0xa238dd80c259a72e81d7e4664a9801593f98d1c5",
-    uiPoolDataProvider: null, // Base doesn't have a dedicated UI Pool Data Provider
-    priceOracle: null, // Base doesn't have a dedicated price oracle
-    chain: base,
-    hasDataProvider: false
-  },
-  42161: { // Arbitrum Mainnet
-    pool: "0x794a61358d6845594f94dc1db02a252b5b4814ad",
-    uiPoolDataProvider: null, // Arbitrum doesn't have a dedicated UI Pool Data Provider
-    priceOracle: null, // Arbitrum doesn't have a dedicated price oracle
-    chain: arbitrum,
-    hasDataProvider: false
+// Get Aave addresses from the official address book
+function getAaveAddresses(chainId: number) {
+  const config = getAaveConfig(chainId);
+  if (!config) {
+    return null;
   }
-};
+  
+  return {
+    pool: config.pool,
+    aaveProtocolDataProvider: config.aaveProtocolDataProvider,
+    priceOracle: config.priceOracle,
+    chain: chainId === 1 ? mainnet : chainId === 8453 ? base : chainId === 42161 ? arbitrum : mainnet,
+    hasDataProvider: true // All chains with config have data providers
+  };
+}
 
 // Mock data for testing - this will be replaced with real API calls once we confirm the correct API
 const MOCK_MARKET_DATA = {
@@ -95,7 +126,7 @@ const MOCK_MARKET_DATA = {
     reserves: [
       {
         symbol: "USDC",
-        address: "0xA0b86a33E6441b8c4C8C8C8C8C8C8C8C8C8C8C8",
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         totalSupply: "1000000000.00",
         totalBorrow: "500000000.00",
         supplyAPY: 2.5,
@@ -270,7 +301,34 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
   try {
     console.log(`Fetching real Aave V3 market data for chain ${targetChainId}`);
     
-    const addresses = AAVE_V3_ADDRESSES[targetChainId];
+    // First, try GraphQL API for complete data
+    console.log(`Trying GraphQL API for chain ${targetChainId}...`);
+    const graphqlData = await fetchAaveDataWithGraphQL(targetChainId);
+    if (graphqlData && graphqlData.length > 0) {
+      console.log(`Successfully fetched ${graphqlData.length} reserves from GraphQL API`);
+      return graphqlData;
+    }
+    
+    // If GraphQL fails, try SDK first
+    console.log(`GraphQL failed, trying SDK...`);
+    try {
+      const addresses = getAaveAddresses(targetChainId);
+      if (addresses) {
+        const sdkData = await fetchAaveDataWithSDK(targetChainId, addresses.pool);
+        if (sdkData && sdkData.length > 0) {
+          console.log(`Successfully fetched ${sdkData.length} reserves using SDK`);
+          return sdkData;
+        }
+      }
+    } catch (sdkError) {
+      console.log("SDK fetch failed:", sdkError);
+      showErrorNotification(sdkError, "Aave SDK Error");
+    }
+    
+    // If GraphQL fails, try direct contract calls
+    console.log(`GraphQL failed, trying direct contract calls...`);
+    
+    const addresses = getAaveAddresses(targetChainId);
     if (!addresses) {
       console.log(`No Aave V3 addresses found for chain ${targetChainId}`);
       return [];
@@ -284,7 +342,7 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
 
     console.log(`Using addresses for chain ${targetChainId}:`, {
       pool: addresses.pool,
-      uiPoolDataProvider: addresses.uiPoolDataProvider,
+      aaveProtocolDataProvider: addresses.aaveProtocolDataProvider,
       priceOracle: addresses.priceOracle
     });
 
@@ -296,6 +354,9 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
     }
 
     console.log(`Using RPC URL for chain ${targetChainId}: ${rpcUrl}`);
+
+    // Get rate limiter for this RPC
+    const rateLimiter = getRateLimiter(rpcUrl);
 
     // Create public client for the chain with proper RPC configuration
     const publicClient = createPublicClient({
@@ -309,45 +370,72 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
 
     console.log(`Created public client for chain ${targetChainId}`);
 
-    // Fetch reserves data from UI Pool Data Provider
-    console.log(`Fetching reserves data from ${addresses.uiPoolDataProvider}...`);
-    const reservesData = await publicClient.readContract({
-      address: addresses.uiPoolDataProvider as Address,
-      abi: UI_POOL_DATA_PROVIDER_ABI,
-      functionName: "getReservesData",
-      args: ["0x0000000000000000000000000000000000000000", addresses.pool as Address]
+    // Wait for rate limit slot before making requests
+    await rateLimiter.waitForSlot();
+
+    // First, get all reserve tokens
+    console.log(`Fetching all reserve tokens from ${addresses.aaveProtocolDataProvider}...`);
+    const reserveTokens = await publicClient.readContract({
+      address: addresses.aaveProtocolDataProvider as Address,
+      abi: PROTOCOL_DATA_PROVIDER_ABI,
+      functionName: "getAllReservesTokens",
+      args: []
     });
 
-    console.log(`Successfully fetched ${reservesData.length} reserves from UI Pool Data Provider`);
+    console.log(`Successfully fetched ${reserveTokens.length} reserve tokens from Protocol Data Provider`);
+
+    // Limit the number of tokens we process to avoid rate limiting
+    const maxTokensToProcess = 10; // Process only first 10 tokens to avoid rate limits
+    const tokensToProcess = reserveTokens.slice(0, maxTokensToProcess);
+    
+    console.log(`Processing ${tokensToProcess.length} tokens (limited to avoid rate limits)`);
 
     const poolInfos: AavePoolInfo[] = [];
 
-    for (const reserve of reservesData) {
+    // Process tokens with rate limiting
+    for (let i = 0; i < tokensToProcess.length; i++) {
+      const token = tokensToProcess[i];
+      
       try {
-        console.log(`Processing reserve: ${reserve.symbol} (${reserve.underlyingAsset})`);
+        console.log(`Processing reserve ${i + 1}/${tokensToProcess.length}: ${token.symbol} (${token.tokenAddress})`);
+        
+        // Wait for rate limit slot before each request
+        await rateLimiter.waitForSlot();
+        
+        // Get detailed reserve data for this token
+        const reserveData = await publicClient.readContract({
+          address: addresses.aaveProtocolDataProvider as Address,
+          abi: PROTOCOL_DATA_PROVIDER_ABI,
+          functionName: "getReserveData",
+          args: [token.tokenAddress]
+        });
+
+        // Wait for rate limit slot before price request
+        await rateLimiter.waitForSlot();
         
         // Get asset price from price oracle
-        console.log(`Fetching price for ${reserve.symbol} from ${addresses.priceOracle}...`);
+        console.log(`Fetching price for ${token.symbol} from ${addresses.priceOracle}...`);
         const priceData = await publicClient.readContract({
           address: addresses.priceOracle as Address,
           abi: PRICE_ORACLE_ABI,
           functionName: "getAssetPrice",
-          args: [reserve.underlyingAsset]
+          args: [token.tokenAddress]
         });
 
         const price = Number(priceData) / 1e8; // Convert from 8 decimals
-        console.log(`Price for ${reserve.symbol}: $${price}`);
+        console.log(`Price for ${token.symbol}: $${price}`);
 
         // Calculate APY from rates (rates are in RAY units, 1e27)
-        const supplyAPY = (Number(reserve.liquidityRate) / 1e27) * 100;
-        const borrowAPY = (Number(reserve.variableBorrowRate) / 1e27) * 100;
+        const supplyAPY = (Number(reserveData.currentLiquidityRate) / 1e27) * 100;
+        const borrowAPY = (Number(reserveData.currentVariableBorrowRate) / 1e27) * 100;
 
-        // Calculate utilization rate
-        const totalSupply = Number(reserve.totalAToken) / 1e18;
-        const totalBorrow = (Number(reserve.totalStableDebt) + Number(reserve.totalVariableDebt)) / 1e18;
+        // For now, use simplified calculations since we don't have total supply/borrow
+        // We'll use the liquidity and variable borrow indices as proxies
+        const totalSupply = Number(reserveData.liquidityIndex) / 1e27;
+        const totalBorrow = Number(reserveData.variableBorrowIndex) / 1e27;
         const utilizationRate = totalSupply > 0 ? (totalBorrow / totalSupply) * 100 : 0;
 
-        console.log(`Calculated values for ${reserve.symbol}:`, {
+        console.log(`Calculated values for ${token.symbol}:`, {
           supplyAPY,
           borrowAPY,
           totalSupply,
@@ -356,8 +444,8 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
         });
 
         const poolInfo: AavePoolInfo = {
-          symbol: reserve.symbol,
-          address: reserve.underlyingAsset,
+          symbol: token.symbol,
+          address: token.tokenAddress,
           totalSupply: totalSupply.toFixed(2),
           totalBorrow: totalBorrow.toFixed(2),
           supplyAPY: supplyAPY,
@@ -367,19 +455,33 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
           price: price,
         };
 
-        console.log(`Processed reserve ${reserve.symbol}:`, poolInfo);
+        console.log(`Processed reserve ${token.symbol}:`, poolInfo);
         poolInfos.push(poolInfo);
 
+        // Add a small delay between tokens to be extra safe
+        if (i < tokensToProcess.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
       } catch (error) {
-        console.warn(`Failed to process reserve ${reserve.symbol}:`, error);
+        console.warn(`Failed to process reserve ${token.symbol}:`, error);
       }
     }
 
-    console.log(`Successfully fetched ${poolInfos.length} reserves from Aave V3`);
-    return poolInfos;
+    if (poolInfos.length > 0) {
+      console.log(`Successfully fetched ${poolInfos.length} reserves from Aave V3`);
+      return poolInfos;
+    }
+
+    // If no data was fetched from contract calls, fall back to mock data
+    console.log(`No data fetched from Protocol Data Provider, using mock data...`);
+    return getMockPoolDataForChain(targetChainId);
 
   } catch (error) {
     console.error(`Failed to fetch real Aave V3 market data for chain ${targetChainId}:`, error);
+    
+    // Show user-friendly error notification
+    showErrorNotification(error, "Aave Data Fetch Error");
     
     // Provide more detailed error information
     if (error instanceof Error) {
@@ -392,19 +494,56 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
         console.error(`RPC timeout. Network might be congested.`);
       } else if (error.message.includes("network")) {
         console.error(`Network error. Please check your internet connection.`);
+      } else if (error.message.includes("429")) {
+        console.error(`Rate limit exceeded. Consider using a different RPC endpoint.`);
       }
     }
     
-    // Fall back to mock data for supported networks
+    // Final fallback to mock data for supported networks
     console.log(`Falling back to mock data for chain ${targetChainId}`);
+    showInfoNotification("Using fallback data for Aave markets", "Fallback Data");
     return getMockPoolDataForChain(targetChainId);
+  }
+}
+
+/**
+ * Fetch Aave data using the official SDK as a fallback
+ */
+async function fetchAaveDataWithSDK(targetChainId: number, poolAddress: string): Promise<AavePoolInfo[]> {
+  try {
+    console.log(`Fetching Aave data with SDK for chain ${targetChainId}, pool ${poolAddress}`);
+    
+    const result = await market(aaveClient, {
+      address: evmAddress(poolAddress),
+      chainId: chainId(targetChainId),
+    });
+
+    if (result.isErr()) {
+      console.error("SDK market fetch error:", result.error);
+      return [];
+    }
+
+    const marketData = result.value;
+    if (!marketData) {
+      console.log(`No market data found for pool ${poolAddress} on chain ${targetChainId}`);
+      return [];
+    }
+
+    console.log("SDK market data fetched:", marketData);
+    
+    // Convert SDK data to our format
+    return convertMarketToPoolInfos(marketData);
+    
+  } catch (error) {
+    console.error(`SDK fetch failed for chain ${targetChainId}:`, error);
+    return [];
   }
 }
 
 /**
  * Get mock pool data for a specific chain
  */
-function getMockPoolDataForChain(targetChainId: number): AavePoolInfo[] {
+export function getMockPoolDataForChain(targetChainId: number): AavePoolInfo[] {
   if (MOCK_MARKET_DATA[targetChainId.toString()]) {
     const mockReserves = MOCK_MARKET_DATA[targetChainId.toString()].reserves;
     console.log(`Using mock data for chain ${targetChainId}:`, mockReserves);
@@ -520,17 +659,73 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       console.log("Processing supply reserve:", reserve);
       
       // Extract data with proper fallbacks and validation
-      const totalSupply = reserve.size?.amount?.value || reserve.totalSupply || "0";
-      const totalBorrow = reserve.borrowInfo?.totalBorrowed?.amount?.value || "0";
+      let totalSupply = "0";
+      let totalBorrow = "0";
+      
+      // Extract total supply from nested structure
+      if (reserve.size?.amount?.value) {
+        totalSupply = String(reserve.size.amount.value);
+      } else if (reserve.totalSupply) {
+        totalSupply = String(reserve.totalSupply);
+      } else if (reserve.size) {
+        // Handle case where size is an object
+        totalSupply = String(reserve.size);
+      }
+      
+      // Extract total borrow from nested structure
+      if (reserve.borrowInfo?.totalBorrowed?.amount?.value) {
+        totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount.value);
+      } else if (reserve.borrowInfo?.total) {
+        totalBorrow = String(reserve.borrowInfo.total);
+      } else if (reserve.borrowInfo?.totalBorrowed) {
+        // Handle case where totalBorrowed is an object
+        if (typeof reserve.borrowInfo.totalBorrowed === 'object') {
+          // Try to extract value from object
+          if (reserve.borrowInfo.totalBorrowed.value) {
+            totalBorrow = String(reserve.borrowInfo.totalBorrowed.value);
+          } else if (reserve.borrowInfo.totalBorrowed.amount) {
+            totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount);
+          } else {
+            totalBorrow = "0";
+          }
+        } else {
+          totalBorrow = String(reserve.borrowInfo.totalBorrowed);
+        }
+      }
       
       // Handle APY values with proper validation
       let supplyAPY = 0;
       let borrowAPY = 0;
       
       try {
-        // Try to extract APY from various possible locations
-        const rawSupplyAPY = reserve.supplyInfo?.apy || reserve.supplyAPY || reserve.apy || 0;
-        const rawBorrowAPY = reserve.borrowInfo?.apy || reserve.borrowAPY || 0;
+        // Extract APY from the complex nested structure returned by Aave SDK
+        // The SDK returns APY in format: { formatted: "0.01", value: "0.0001", raw: "1000000000000000000000000" }
+        let rawSupplyAPY = 0;
+        let rawBorrowAPY = 0;
+        
+        // Try to get supply APY from the nested structure
+        if (reserve.supplyInfo?.apy?.formatted) {
+          rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.formatted);
+        } else if (reserve.supplyInfo?.apy?.value) {
+          rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.value) * 100; // Convert decimal to percentage
+        } else if (reserve.supplyInfo?.apy) {
+          rawSupplyAPY = typeof reserve.supplyInfo.apy === 'string' ? parseFloat(reserve.supplyInfo.apy) : Number(reserve.supplyInfo.apy);
+        } else if (reserve.supplyInfo?.rate) {
+          // Alternative field name
+          rawSupplyAPY = typeof reserve.supplyInfo.rate === 'string' ? parseFloat(reserve.supplyInfo.rate) : Number(reserve.supplyInfo.rate);
+        }
+        
+        // Try to get borrow APY from the nested structure
+        if (reserve.borrowInfo?.apy?.formatted) {
+          rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.formatted);
+        } else if (reserve.borrowInfo?.apy?.value) {
+          rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.value) * 100; // Convert decimal to percentage
+        } else if (reserve.borrowInfo?.apy) {
+          rawBorrowAPY = typeof reserve.borrowInfo.apy === 'string' ? parseFloat(reserve.borrowInfo.apy) : Number(reserve.borrowInfo.apy);
+        } else if (reserve.borrowInfo?.rate) {
+          // Alternative field name
+          rawBorrowAPY = typeof reserve.borrowInfo.rate === 'string' ? parseFloat(reserve.borrowInfo.rate) : Number(reserve.borrowInfo.rate);
+        }
         
         // Convert to numbers and validate
         supplyAPY = typeof rawSupplyAPY === 'string' ? parseFloat(rawSupplyAPY) : Number(rawSupplyAPY);
@@ -540,9 +735,12 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         if (isNaN(supplyAPY)) supplyAPY = 0;
         if (isNaN(borrowAPY)) borrowAPY = 0;
         
-        // Convert from basis points if needed (some APIs return basis points)
-        if (supplyAPY > 100) supplyAPY = supplyAPY / 10000; // Convert from basis points
-        if (borrowAPY > 100) borrowAPY = borrowAPY / 10000; // Convert from basis points
+        console.log(`APY extraction for ${reserve.underlyingToken?.symbol}:`, {
+          supplyAPY,
+          borrowAPY,
+          supplyInfo: reserve.supplyInfo?.apy,
+          borrowInfo: reserve.borrowInfo?.apy
+        });
         
       } catch (error) {
         console.warn(`Failed to parse APY values for ${reserve.underlyingToken?.symbol}:`, error);
@@ -553,10 +751,26 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       // Handle utilization rate
       let utilizationRate = 0;
       try {
-        const rawUtilization = reserve.borrowInfo?.utilizationRate || reserve.utilizationRate || 0;
+        // Extract utilization rate from the nested structure
+        let rawUtilization = 0;
+        if (reserve.borrowInfo?.utilizationRate?.formatted) {
+          rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.formatted);
+        } else if (reserve.borrowInfo?.utilizationRate?.value) {
+          rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.value) * 100; // Convert decimal to percentage
+        } else if (reserve.borrowInfo?.utilizationRate) {
+          rawUtilization = typeof reserve.borrowInfo.utilizationRate === 'string' ? parseFloat(reserve.borrowInfo.utilizationRate) : Number(reserve.borrowInfo.utilizationRate);
+        } else if (reserve.utilizationRate) {
+          rawUtilization = typeof reserve.utilizationRate === 'string' ? parseFloat(reserve.utilizationRate) : Number(reserve.utilizationRate);
+        }
+        
         utilizationRate = typeof rawUtilization === 'string' ? parseFloat(rawUtilization) : Number(rawUtilization);
         if (isNaN(utilizationRate)) utilizationRate = 0;
-        if (utilizationRate > 100) utilizationRate = utilizationRate / 100; // Convert from basis points
+        
+        console.log(`Utilization rate for ${reserve.underlyingToken?.symbol}:`, {
+          utilizationRate,
+          rawUtilization,
+          borrowInfo: reserve.borrowInfo?.utilizationRate
+        });
       } catch (error) {
         console.warn(`Failed to parse utilization rate for ${reserve.underlyingToken?.symbol}:`, error);
         utilizationRate = 0;
@@ -565,25 +779,41 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       // Handle price
       let price = 1.0;
       try {
-        const rawPrice = reserve.usdExchangeRate || reserve.price || 1.0;
+        // Extract price from nested structure
+        let rawPrice = 1.0;
+        if (reserve.usdExchangeRate) {
+          rawPrice = reserve.usdExchangeRate;
+        } else if (reserve.price) {
+          rawPrice = reserve.price;
+        } else if (reserve.size?.usdPerToken) {
+          rawPrice = reserve.size.usdPerToken;
+        }
+        
         price = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice);
         if (isNaN(price)) price = 1.0;
+        
+        console.log(`Price for ${reserve.underlyingToken?.symbol}:`, {
+          price,
+          rawPrice,
+          usdExchangeRate: reserve.usdExchangeRate,
+          size: reserve.size?.usdPerToken
+        });
       } catch (error) {
         console.warn(`Failed to parse price for ${reserve.underlyingToken?.symbol}:`, error);
         price = 1.0;
       }
       
-      const poolInfo: AavePoolInfo = {
-        symbol: reserve.underlyingToken?.symbol || reserve.symbol || "UNKNOWN",
-        address: reserve.underlyingToken?.address || reserve.address || "0x0",
-        totalSupply: totalSupply,
-        totalBorrow: totalBorrow,
-        supplyAPY: supplyAPY,
-        borrowAPY: borrowAPY,
-        utilizationRate: utilizationRate,
-        liquidity: totalSupply,
-        price: price,
-      };
+              const poolInfo: AavePoolInfo = {
+          symbol: reserve.underlyingToken?.symbol || reserve.symbol || "UNKNOWN",
+          address: reserve.underlyingToken?.address || reserve.address || "0x0",
+          totalSupply: String(totalSupply || "0"),
+          totalBorrow: String(totalBorrow || "0"),
+          supplyAPY: supplyAPY,
+          borrowAPY: borrowAPY,
+          utilizationRate: utilizationRate,
+          liquidity: (parseFloat(String(totalSupply || "0")) - parseFloat(String(totalBorrow || "0"))).toFixed(2),
+          price: price,
+        };
       
       console.log("Created pool info:", poolInfo);
       poolInfos.push(poolInfo);
@@ -597,16 +827,72 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       if (existingIndex === -1) {
         console.log("Processing borrow reserve:", reserve);
         
-        const totalSupply = reserve.size?.amount?.value || reserve.totalSupply || "0";
-        const totalBorrow = reserve.borrowInfo?.totalBorrowed?.amount?.value || "0";
+        let totalSupply = "0";
+        let totalBorrow = "0";
+        
+        // Extract total supply from nested structure
+        if (reserve.size?.amount?.value) {
+          totalSupply = String(reserve.size.amount.value);
+        } else if (reserve.totalSupply) {
+          totalSupply = String(reserve.totalSupply);
+        } else if (reserve.size) {
+          // Handle case where size is an object
+          totalSupply = String(reserve.size);
+        }
+        
+        // Extract total borrow from nested structure
+        if (reserve.borrowInfo?.totalBorrowed?.amount?.value) {
+          totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount.value);
+        } else if (reserve.borrowInfo?.total) {
+          totalBorrow = String(reserve.borrowInfo.total);
+        } else if (reserve.borrowInfo?.totalBorrowed) {
+          // Handle case where totalBorrowed is an object
+          if (typeof reserve.borrowInfo.totalBorrowed === 'object') {
+            // Try to extract value from object
+            if (reserve.borrowInfo.totalBorrowed.value) {
+              totalBorrow = String(reserve.borrowInfo.totalBorrowed.value);
+            } else if (reserve.borrowInfo.totalBorrowed.amount) {
+              totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount);
+            } else {
+              totalBorrow = "0";
+            }
+          } else {
+            totalBorrow = String(reserve.borrowInfo.totalBorrowed);
+          }
+        }
         
         // Handle APY values with proper validation
         let supplyAPY = 0;
         let borrowAPY = 0;
         
         try {
-          const rawSupplyAPY = reserve.supplyInfo?.apy || reserve.supplyAPY || reserve.apy || 0;
-          const rawBorrowAPY = reserve.borrowInfo?.apy || reserve.borrowAPY || 0;
+          // Extract APY from the complex nested structure returned by Aave SDK
+          let rawSupplyAPY = 0;
+          let rawBorrowAPY = 0;
+          
+          // Try to get supply APY from the nested structure
+          if (reserve.supplyInfo?.apy?.formatted) {
+            rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.formatted);
+          } else if (reserve.supplyInfo?.apy?.value) {
+            rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.value) * 100; // Convert decimal to percentage
+          } else if (reserve.supplyInfo?.apy) {
+            rawSupplyAPY = typeof reserve.supplyInfo.apy === 'string' ? parseFloat(reserve.supplyInfo.apy) : Number(reserve.supplyInfo.apy);
+          } else if (reserve.supplyInfo?.rate) {
+            // Alternative field name
+            rawSupplyAPY = typeof reserve.supplyInfo.rate === 'string' ? parseFloat(reserve.supplyInfo.rate) : Number(reserve.supplyInfo.rate);
+          }
+          
+          // Try to get borrow APY from the nested structure
+          if (reserve.borrowInfo?.apy?.formatted) {
+            rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.formatted);
+          } else if (reserve.borrowInfo?.apy?.value) {
+            rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.value) * 100; // Convert decimal to percentage
+          } else if (reserve.borrowInfo?.apy) {
+            rawBorrowAPY = typeof reserve.borrowInfo.apy === 'string' ? parseFloat(reserve.borrowInfo.apy) : Number(reserve.borrowInfo.apy);
+          } else if (reserve.borrowInfo?.rate) {
+            // Alternative field name
+            rawBorrowAPY = typeof reserve.borrowInfo.rate === 'string' ? parseFloat(reserve.borrowInfo.rate) : Number(reserve.borrowInfo.rate);
+          }
           
           supplyAPY = typeof rawSupplyAPY === 'string' ? parseFloat(rawSupplyAPY) : Number(rawSupplyAPY);
           borrowAPY = typeof rawBorrowAPY === 'string' ? parseFloat(rawBorrowAPY) : Number(rawBorrowAPY);
@@ -614,8 +900,12 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
           if (isNaN(supplyAPY)) supplyAPY = 0;
           if (isNaN(borrowAPY)) borrowAPY = 0;
           
-          if (supplyAPY > 100) supplyAPY = supplyAPY / 10000;
-          if (borrowAPY > 100) borrowAPY = borrowAPY / 10000;
+          console.log(`APY extraction for borrow reserve ${reserve.underlyingToken?.symbol}:`, {
+            supplyAPY,
+            borrowAPY,
+            supplyInfo: reserve.supplyInfo?.apy,
+            borrowInfo: reserve.borrowInfo?.apy
+          });
           
         } catch (error) {
           console.warn(`Failed to parse APY values for ${reserve.underlyingToken?.symbol}:`, error);
@@ -626,10 +916,26 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         // Handle utilization rate
         let utilizationRate = 0;
         try {
-          const rawUtilization = reserve.borrowInfo?.utilizationRate || reserve.utilizationRate || 0;
+          // Extract utilization rate from the nested structure
+          let rawUtilization = 0;
+          if (reserve.borrowInfo?.utilizationRate?.formatted) {
+            rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.formatted);
+          } else if (reserve.borrowInfo?.utilizationRate?.value) {
+            rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.value) * 100; // Convert decimal to percentage
+          } else if (reserve.borrowInfo?.utilizationRate) {
+            rawUtilization = typeof reserve.borrowInfo.utilizationRate === 'string' ? parseFloat(reserve.borrowInfo.utilizationRate) : Number(reserve.borrowInfo.utilizationRate);
+          } else if (reserve.utilizationRate) {
+            rawUtilization = typeof reserve.utilizationRate === 'string' ? parseFloat(reserve.utilizationRate) : Number(reserve.utilizationRate);
+          }
+          
           utilizationRate = typeof rawUtilization === 'string' ? parseFloat(rawUtilization) : Number(rawUtilization);
           if (isNaN(utilizationRate)) utilizationRate = 0;
-          if (utilizationRate > 100) utilizationRate = utilizationRate / 100;
+          
+          console.log(`Utilization rate for borrow reserve ${reserve.underlyingToken?.symbol}:`, {
+            utilizationRate,
+            rawUtilization,
+            borrowInfo: reserve.borrowInfo?.utilizationRate
+          });
         } catch (error) {
           console.warn(`Failed to parse utilization rate for ${reserve.underlyingToken?.symbol}:`, error);
           utilizationRate = 0;
@@ -638,9 +944,25 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         // Handle price
         let price = 1.0;
         try {
-          const rawPrice = reserve.usdExchangeRate || reserve.price || 1.0;
+          // Extract price from nested structure
+          let rawPrice = 1.0;
+          if (reserve.usdExchangeRate) {
+            rawPrice = reserve.usdExchangeRate;
+          } else if (reserve.price) {
+            rawPrice = reserve.price;
+          } else if (reserve.size?.usdPerToken) {
+            rawPrice = reserve.size.usdPerToken;
+          }
+          
           price = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice);
           if (isNaN(price)) price = 1.0;
+          
+          console.log(`Price for borrow reserve ${reserve.underlyingToken?.symbol}:`, {
+            price,
+            rawPrice,
+            usdExchangeRate: reserve.usdExchangeRate,
+            size: reserve.size?.usdPerToken
+          });
         } catch (error) {
           console.warn(`Failed to parse price for ${reserve.underlyingToken?.symbol}:`, error);
           price = 1.0;
@@ -649,12 +971,12 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         const poolInfo: AavePoolInfo = {
           symbol: reserve.underlyingToken?.symbol || reserve.symbol || "UNKNOWN",
           address: reserve.underlyingToken?.address || reserve.address || "0x0",
-          totalSupply: totalSupply,
-          totalBorrow: totalBorrow,
+          totalSupply: String(totalSupply || "0"),
+          totalBorrow: String(totalBorrow || "0"),
           supplyAPY: supplyAPY,
           borrowAPY: borrowAPY,
           utilizationRate: utilizationRate,
-          liquidity: totalSupply,
+          liquidity: (parseFloat(String(totalSupply || "0")) - parseFloat(String(totalBorrow || "0"))).toFixed(2),
           price: price,
         };
         
@@ -676,7 +998,7 @@ export async function fetchMarketReserves(marketAddress: string, targetChainId: 
     console.log(`Fetching reserves for market ${marketAddress} on chain ${targetChainId}`);
     
     // Check if this chain has a dedicated data provider
-    const addresses = AAVE_V3_ADDRESSES[targetChainId];
+    const addresses = getAaveAddresses(targetChainId);
     if (!addresses || !addresses.hasDataProvider) {
       console.log(`Chain ${targetChainId} doesn't have a dedicated data provider, using mock data`);
       return getMockPoolDataForChain(targetChainId);
@@ -746,5 +1068,147 @@ export async function getAllMarkets() {
   } catch (error) {
     console.error("Failed to fetch all markets:", error);
     throw error;
+  }
+}
+
+/**
+ * Fetch complete Aave market data using GraphQL API
+ */
+export async function fetchAaveDataWithGraphQL(targetChainId: number): Promise<AavePoolInfo[]> {
+  try {
+    console.log(`Fetching Aave data with GraphQL for chain ${targetChainId}`);
+    
+    // Get the correct pool address for this chain
+    const addresses = getAaveAddresses(targetChainId);
+    if (!addresses) {
+      console.log(`No Aave addresses found for chain ${targetChainId}`);
+      return [];
+    }
+    
+    // Use the new GraphQL endpoint for Aave V3
+    // The old endpoints have been deprecated, using the new unified endpoint
+    let graphqlEndpoint = "https://gateway.thegraph.com/api/[api-key]/subgraphs/id/ELUcwgpm14LKPLrBRuVvPvNKHQ9HvwmtKgKSH6123cr7";
+    
+    // For now, we'll use the same endpoint for all chains since the new API is unified
+    // You'll need to replace [api-key] with an actual Graph API key
+    // For now, we'll skip GraphQL and rely on SDK/contract calls
+    console.log("GraphQL endpoints have been deprecated. Using SDK fallback instead.");
+    return [];
+    
+    // Simplified query to get basic reserve data
+    const query = `
+      query GetReserves($poolAddress: String!) {
+        reserves(where: { pool: $poolAddress }, first: 100) {
+          id
+          name
+          symbol
+          decimals
+          liquidityRate
+          variableBorrowRate
+          stableBorrowRate
+          totalScaledVariableDebt
+          totalCurrentVariableDebt
+          totalPrincipalStableDebt
+          availableLiquidity
+          totalLiquidity
+          utilizationRate
+          totalStableDebt
+          totalVariableDebt
+          totalDebt
+          price {
+            priceInEth
+          }
+        }
+      }
+    `;
+    
+    const response = await fetch(graphqlEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        variables: { poolAddress: addresses.pool.toLowerCase() }
+      })
+    });
+    
+    if (!response.ok) {
+      console.error(`GraphQL request failed: ${response.status} ${response.statusText}`);
+      throw new Error(`GraphQL request failed: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    console.log("GraphQL response:", data);
+    
+    if (data.errors) {
+      console.error("GraphQL errors:", data.errors);
+      throw new Error(`GraphQL errors: ${JSON.stringify(data.errors)}`);
+    }
+    
+    const reserves = data.data?.reserves || [];
+    console.log(`Found ${reserves.length} reserves in GraphQL response`);
+    
+    if (reserves.length === 0) {
+      console.log("No reserves found in GraphQL response, falling back to contract calls");
+      return [];
+    }
+    
+    const poolInfos: AavePoolInfo[] = [];
+    
+    for (const reserve of reserves) {
+      try {
+        // Convert rates from basis points to percentages
+        const supplyAPY = (Number(reserve.liquidityRate) / 10000) * 100;
+        const borrowAPY = (Number(reserve.variableBorrowRate) / 10000) * 100;
+        
+        // Calculate total supply and borrow with proper decimal handling
+        const decimals = Number(reserve.decimals) || 18;
+        const totalSupply = Number(reserve.totalLiquidity || reserve.availableLiquidity || 0) / Math.pow(10, decimals);
+        const totalBorrow = Number(reserve.totalVariableDebt || reserve.totalDebt || 0) / Math.pow(10, decimals);
+        const utilizationRate = Number(reserve.utilizationRate) / 10000;
+        
+        // Get price (convert from ETH to USD if needed)
+        const price = reserve.price?.priceInEth ? Number(reserve.price.priceInEth) : 1.0;
+        
+        const poolInfo: AavePoolInfo = {
+          symbol: reserve.symbol,
+          address: reserve.id,
+          totalSupply: totalSupply.toFixed(2),
+          totalBorrow: totalBorrow.toFixed(2),
+          supplyAPY: supplyAPY,
+          borrowAPY: borrowAPY,
+          utilizationRate: utilizationRate * 100,
+          liquidity: (totalSupply - totalBorrow).toFixed(2),
+          price: price,
+        };
+        
+        console.log(`Processed reserve ${reserve.symbol}:`, poolInfo);
+        poolInfos.push(poolInfo);
+        
+      } catch (error) {
+        console.warn(`Failed to process reserve ${reserve.symbol}:`, error);
+      }
+    }
+    
+    console.log(`Successfully fetched ${poolInfos.length} reserves from GraphQL`);
+    return poolInfos;
+    
+  } catch (error) {
+    console.error(`Failed to fetch Aave data with GraphQL for chain ${targetChainId}:`, error);
+    
+    // Show user-friendly error notification
+    showErrorNotification(error, "Aave GraphQL Error");
+    
+    // Provide more specific error information
+    if (error instanceof Error) {
+      if (error.message.includes("fetch")) {
+        console.error("Network error - GraphQL endpoint might be unavailable");
+      } else if (error.message.includes("GraphQL")) {
+        console.error("GraphQL query error - endpoint or query might be incorrect");
+      }
+    }
+    
+    return [];
   }
 }

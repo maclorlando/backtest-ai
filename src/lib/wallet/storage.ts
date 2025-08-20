@@ -9,6 +9,27 @@ export type StoredWallet = {
 
 const WALLET_KEY = "bt_wallet_v1";
 
+// Migration function to handle old wallet format
+function migrateWalletData(raw: string): StoredWallet | null {
+  try {
+    const data = JSON.parse(raw);
+    
+    // Handle old format with 'type' field
+    if (data.type === "pk" || data.type === undefined) {
+      return {
+        encrypted: data.encrypted,
+        createdAt: data.createdAt || Date.now(),
+        address: data.address
+      };
+    }
+    
+    // Handle new format
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 export function saveWallet(w: StoredWallet) {
   localStorage.setItem(WALLET_KEY, JSON.stringify(w));
 }
@@ -16,7 +37,17 @@ export function saveWallet(w: StoredWallet) {
 export function loadWallet(): StoredWallet | null {
   try {
     const raw = localStorage.getItem(WALLET_KEY);
-    return raw ? (JSON.parse(raw) as StoredWallet) : null;
+    if (!raw) return null;
+    
+    // Try to migrate old format
+    const migrated = migrateWalletData(raw);
+    if (migrated) {
+      // Save the migrated format
+      saveWallet(migrated);
+      return migrated;
+    }
+    
+    return JSON.parse(raw) as StoredWallet;
   } catch {
     return null;
   }
@@ -46,7 +77,7 @@ export const POPULAR_TOKENS = {
   // Ethereum Mainnet
   1: [
     { symbol: "WETH", name: "Wrapped Ether", address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", decimals: 18 },
-    { symbol: "USDC", name: "USD Coin", address: "0xA0b86a33E6441b8c4C8C8C8C8C8C8C8C8C8C8C8", decimals: 6 },
+    { symbol: "USDC", name: "USD Coin", address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", decimals: 6 },
     { symbol: "USDT", name: "Tether USD", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
     { symbol: "WBTC", name: "Wrapped Bitcoin", address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", decimals: 8 },
     { symbol: "AAVE", name: "Aave", address: "0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9", decimals: 18 },
@@ -77,7 +108,7 @@ export const POPULAR_TOKENS = {
     { symbol: "CRV", name: "Curve DAO Token", address: "0x7122985656e38BDC0302Db86685bb972b145bD3C", decimals: 18 },
     { symbol: "SNX", name: "Synthetix", address: "0x22e6966B799c4D5B13BE963E8e3cA27b1eC8458b", decimals: 18 },
     { symbol: "UNI", name: "Uniswap", address: "0x6fd9d7AD17242c41f7131d257212c54A0e816691", decimals: 18 },
-    { symbol: "AAVE", name: "Aave", address: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22", decimals: 18 },
+    { symbol: "AAVE", name: "Aave", address: "0x4d5F47FA6A74757f35C14fD3a6Ef8E3C9BC514E8", decimals: 18 },
   ],
   // Arbitrum One
   42161: [
@@ -182,4 +213,29 @@ export function removeTrackedToken(chainId: number, tokenAddress: string) {
 export function isTokenTracked(chainId: number, tokenAddress: string): boolean {
   const currentTokens = loadTrackedTokens(chainId);
   return currentTokens.some(t => t.address.toLowerCase() === tokenAddress.toLowerCase());
+}
+
+/**
+ * Clean up duplicate tokens from the tracked list
+ */
+export function cleanupDuplicateTokens(chainId: number) {
+  const currentTokens = loadTrackedTokens(chainId);
+  const uniqueTokens: TrackedToken[] = [];
+  const seenAddresses = new Set<string>();
+  
+  for (const token of currentTokens) {
+    const lowerAddress = token.address.toLowerCase();
+    if (!seenAddresses.has(lowerAddress)) {
+      seenAddresses.add(lowerAddress);
+      uniqueTokens.push(token);
+    }
+  }
+  
+  // Only save if we actually removed duplicates
+  if (uniqueTokens.length !== currentTokens.length) {
+    saveTrackedTokens(chainId, uniqueTokens);
+    console.log(`Cleaned up ${currentTokens.length - uniqueTokens.length} duplicate tokens for chain ${chainId}`);
+  }
+  
+  return uniqueTokens;
 }

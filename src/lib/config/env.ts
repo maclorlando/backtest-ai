@@ -31,7 +31,7 @@ export function getEnvironmentConfig(): EnvironmentConfig {
     },
     
     // Feature flags
-    enableRealPoolData: true,
+    enableRealPoolData: true, // Re-enabled to get real Aave data
     enablePriceOracle: true,
     enableMultiNetwork: true,
   };

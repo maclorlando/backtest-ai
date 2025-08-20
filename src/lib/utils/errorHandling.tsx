@@ -1,4 +1,11 @@
 import { notifications } from "@mantine/notifications";
+import { 
+  IconAlertTriangle,
+  IconAlertCircle,
+  IconCheck,
+  IconInfoCircle,
+  IconX
+} from "@tabler/icons-react";
 
 export interface ErrorDetails {
   code?: string | number;
@@ -9,115 +16,55 @@ export interface ErrorDetails {
 }
 
 export function parseBlockchainError(error: any): ErrorDetails {
-  // Handle Viem errors
-  if (error?.name === "TransactionExecutionError") {
+  // Handle private key validation errors
+  if (error?.message?.includes("Invalid private key")) {
     return {
-      code: "TRANSACTION_EXECUTION_ERROR",
-      message: "Transaction failed to execute",
+      code: "INVALID_PRIVATE_KEY",
+      message: "Invalid private key format",
       details: error.message,
-      suggestion: "Check your wallet balance and gas fees, then try again",
-      retryable: true
-    };
-  }
-
-  if (error?.name === "UserRejectedRequestError") {
-    return {
-      code: "USER_REJECTED",
-      message: "Transaction was rejected by user",
-      details: "You cancelled the transaction in your wallet",
-      suggestion: "Try again and approve the transaction in your wallet",
-      retryable: true
-    };
-  }
-
-  if (error?.name === "InsufficientFundsError") {
-    return {
-      code: "INSUFFICIENT_FUNDS",
-      message: "Insufficient funds for transaction",
-      details: error.message,
-      suggestion: "Add more funds to your wallet or reduce the transaction amount",
+      suggestion: "Make sure your private key is 64 hexadecimal characters. You can include or omit the '0x' prefix.",
       retryable: false
     };
   }
 
-  if (error?.name === "ContractFunctionExecutionError") {
+  // Handle Aave data fetching errors
+  if (error?.message?.includes("Failed to fetch") || error?.message?.includes("AAVE")) {
     return {
-      code: "CONTRACT_ERROR",
-      message: "Smart contract execution failed",
+      code: "AAVE_DATA_ERROR",
+      message: "Failed to fetch Aave market data",
       details: error.message,
-      suggestion: "The contract may have rejected the transaction. Check if you have sufficient allowance and balance.",
+      suggestion: "Please check your internet connection and try again. The data will be refreshed automatically.",
       retryable: true
     };
   }
 
-  // Handle RPC errors
-  if (error?.message?.includes("eth_getTransactionCount")) {
+  // Handle RPC timeout errors
+  if (error?.message?.includes("timeout") || error?.message?.includes("RPC")) {
     return {
-      code: "RPC_ERROR",
-      message: "Network connection issue",
-      details: "Failed to get transaction count from the network",
-      suggestion: "Check your internet connection and try again. If the issue persists, try switching networks.",
-      retryable: true
-    };
-  }
-
-  if (error?.message?.includes("nonce")) {
-    return {
-      code: "NONCE_ERROR",
-      message: "Transaction nonce issue",
+      code: "RPC_TIMEOUT",
+      message: "Network request timed out",
       details: error.message,
-      suggestion: "Try refreshing your wallet or wait a moment before retrying",
+      suggestion: "The network is experiencing high load. Please try again in a few moments.",
       retryable: true
     };
   }
 
-  if (error?.message?.includes("gas")) {
+  // Handle contract function errors
+  if (error?.message?.includes("ContractFunctionExecutionError") || error?.message?.includes("decimals")) {
     return {
-      code: "GAS_ERROR",
-      message: "Gas estimation failed",
+      code: "INVALID_CONTRACT",
+      message: "Invalid token contract",
       details: error.message,
-      suggestion: "Try increasing gas limit or check if the network is congested",
-      retryable: true
+      suggestion: "This token address may not be a valid ERC20 contract. Please check the address and try again.",
+      retryable: false
     };
   }
 
-  // Handle API errors
-  if (error?.status === 429) {
-    return {
-      code: "RATE_LIMIT",
-      message: "Rate limit exceeded",
-      details: "Too many requests to the API",
-      suggestion: "Wait a moment before trying again",
-      retryable: true
-    };
-  }
-
-  if (error?.status >= 500) {
-    return {
-      code: "SERVER_ERROR",
-      message: "Server error",
-      details: `Server returned error ${error.status}`,
-      suggestion: "The service is temporarily unavailable. Please try again later.",
-      retryable: true
-    };
-  }
-
-  // Handle network errors
-  if (error?.message?.includes("fetch")) {
-    return {
-      code: "NETWORK_ERROR",
-      message: "Network connection failed",
-      details: error.message,
-      suggestion: "Check your internet connection and try again",
-      retryable: true
-    };
-  }
-
-  // Default error
+  // Default error parsing
   return {
-    code: "UNKNOWN_ERROR",
-    message: "An unexpected error occurred",
-    details: error?.message || "Unknown error",
+    code: error?.code || "UNKNOWN_ERROR",
+    message: error?.message || "An unexpected error occurred",
+    details: error?.details || error?.stack,
     suggestion: "Please try again. If the problem persists, contact support.",
     retryable: true
   };
@@ -127,53 +74,133 @@ export function showErrorNotification(error: any, title?: string) {
   const errorDetails = parseBlockchainError(error);
   
   notifications.show({
-    title: title || "Error",
-    message: (
-      <div>
-        <div style={{ fontWeight: 600, marginBottom: 4 }}>{errorDetails.message}</div>
-        {errorDetails.details && (
-          <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: 4 }}>
-            {errorDetails.details}
-          </div>
-        )}
-        {errorDetails.suggestion && (
-          <div style={{ fontSize: '0.875rem', color: '#0066cc' }}>
-            💡 {errorDetails.suggestion}
-          </div>
-        )}
-      </div>
-    ),
-    color: "red",
+    id: `error-${Date.now()}`,
+    title: title || errorDetails.message,
+    message: errorDetails.suggestion || errorDetails.details,
+    color: 'red',
+    variant: 'error',
+    icon: <IconAlertTriangle size={16} />,
     autoClose: 8000,
+    withCloseButton: true,
+    styles: {
+      root: {
+        borderLeft: '4px solid #e53e3e',
+        backgroundColor: '#1a202c',
+        color: '#e2e8f0',
+      },
+      title: {
+        color: '#feb2b2',
+        fontWeight: 600,
+      },
+      description: {
+        color: '#cbd5e0',
+      },
+      closeButton: {
+        color: '#a0aec0',
+        '&:hover': {
+          backgroundColor: '#2d3748',
+        },
+      },
+    },
   });
-
-  return errorDetails;
 }
 
 export function showSuccessNotification(message: string, title?: string) {
   notifications.show({
+    id: `success-${Date.now()}`,
     title: title || "Success",
-    message,
-    color: "green",
-    autoClose: 4000,
+    message: message,
+    color: 'green',
+    variant: 'success',
+    icon: <IconCheck size={16} />,
+    autoClose: 5000,
+    withCloseButton: true,
+    styles: {
+      root: {
+        borderLeft: '4px solid #38a169',
+        backgroundColor: '#1a202c',
+        color: '#e2e8f0',
+      },
+      title: {
+        color: '#9ae6b4',
+        fontWeight: 600,
+      },
+      description: {
+        color: '#cbd5e0',
+      },
+      closeButton: {
+        color: '#a0aec0',
+        '&:hover': {
+          backgroundColor: '#2d3748',
+        },
+      },
+    },
   });
 }
 
 export function showWarningNotification(message: string, title?: string) {
   notifications.show({
+    id: `warning-${Date.now()}`,
     title: title || "Warning",
-    message,
-    color: "orange",
+    message: message,
+    color: 'yellow',
+    variant: 'warning',
+    icon: <IconAlertCircle size={16} />,
     autoClose: 6000,
+    withCloseButton: true,
+    styles: {
+      root: {
+        borderLeft: '4px solid #d69e2e',
+        backgroundColor: '#1a202c',
+        color: '#e2e8f0',
+      },
+      title: {
+        color: '#faf089',
+        fontWeight: 600,
+      },
+      description: {
+        color: '#cbd5e0',
+      },
+      closeButton: {
+        color: '#a0aec0',
+        '&:hover': {
+          backgroundColor: '#2d3748',
+        },
+      },
+    },
   });
 }
 
 export function showInfoNotification(message: string, title?: string) {
   notifications.show({
-    title: title || "Info",
-    message,
-    color: "blue",
-    autoClose: 5000,
+    id: `info-${Date.now()}`,
+    title: title || "Information",
+    message: message,
+    color: 'blue',
+    variant: 'info',
+    icon: <IconInfoCircle size={16} />,
+    autoClose: 4000,
+    withCloseButton: true,
+    styles: {
+      root: {
+        borderLeft: '4px solid #3182ce',
+        backgroundColor: '#1a202c',
+        color: '#e2e8f0',
+      },
+      title: {
+        color: '#90cdf4',
+        fontWeight: 600,
+      },
+      description: {
+        color: '#cbd5e0',
+      },
+      closeButton: {
+        color: '#a0aec0',
+        '&:hover': {
+          backgroundColor: '#2d3748',
+        },
+      },
+    },
   });
 }
 
