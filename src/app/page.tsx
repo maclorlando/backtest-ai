@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useState, useEffect } from "react";
-import { format, subYears } from "date-fns";
+import { format, subYears, differenceInCalendarDays } from "date-fns";
 import Image from "next/image";
 import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
 import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
@@ -35,9 +35,14 @@ export default function Home() {
       perAssetWeights?: Record<string, number[]>;
     };
     metrics: {
+      startDate: string;
+      endDate: string;
+      tradingDays: number;
+      initialCapital: number;
       finalValue: number;
       cumulativeReturnPct: number;
       cagrPct: number;
+      volatilityPct: number;
       maxDrawdownPct: number;
       sharpe: number | null;
     };
@@ -433,30 +438,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Comparison Chart */}
-      {comparisonLines.length > 0 && (
-        <section className="chart-container">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Portfolio Comparison</h2>
-              <p className="text-[rgb(var(--fg-secondary))]">
-                Comparing {comparisonLines.length} saved portfolios
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setComparisonLines([]);
-                setComparisonData([]);
-              }}
-              className="btn btn-secondary"
-            >
-              Close Comparison
-            </button>
-          </div>
-          <ComparisonChart data={comparisonData} lines={comparisonLines} />
-        </section>
-      )}
-
       {/* Loading State */}
       {loading && (
         <section className="space-y-6">
@@ -494,6 +475,10 @@ export default function Home() {
               <div className="stat-label">CAGR</div>
             </div>
             <div className="stat-card">
+              <div className="stat-value">${result.metrics.initialCapital.toFixed(2)}</div>
+              <div className="stat-label">Initial Capital</div>
+            </div>
+            <div className="stat-card">
               <div className="stat-value text-red-400">{result.metrics.maxDrawdownPct.toFixed(2)}%</div>
               <div className="stat-label">Max Drawdown</div>
             </div>
@@ -508,6 +493,24 @@ export default function Home() {
             <div className="stat-card">
               <div className="stat-value">{result.metrics.volatilityPct.toFixed(2)}%</div>
               <div className="stat-label">Volatility</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value text-sm font-normal leading-tight">
+                {allocations.map(a => `${ASSET_ID_TO_SYMBOL[a.id]} ${(a.allocation * 100).toFixed(1)}%`).join(" • ")}
+              </div>
+              <div className="stat-label">Composition</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value text-sm font-normal">
+                {mode === "none" && "None"}
+                {mode === "periodic" && `Every ${periodDays} day${periodDays === 1 ? '' : 's'}`}
+                {mode === "threshold" && `Deviation ±${thresholdPct}%`}
+              </div>
+              <div className="stat-label">Rebalancing</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{(differenceInCalendarDays(new Date(result.metrics.endDate), new Date(result.metrics.startDate)) / 365).toFixed(1)}y</div>
+              <div className="stat-label">{result.metrics.startDate} → {result.metrics.endDate}</div>
             </div>
           </div>
 
@@ -569,6 +572,30 @@ export default function Home() {
               )}
             </div>
           </div>
+        </section>
+      )}
+
+      {/* Comparison Chart - always after results section */}
+      {comparisonLines.length > 0 && (
+        <section className="chart-container">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Portfolio Comparison</h2>
+              <p className="text-[rgb(var(--fg-secondary))]">
+                Comparing {comparisonLines.length} saved portfolios
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setComparisonLines([]);
+                setComparisonData([]);
+              }}
+              className="btn btn-secondary"
+            >
+              Close Comparison
+            </button>
+          </div>
+          <ComparisonChart data={comparisonData} lines={comparisonLines} />
         </section>
       )}
     </div>

@@ -426,6 +426,7 @@ body {
 .widget-grid .card {
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 .widget-grid .card > *:last-child {
