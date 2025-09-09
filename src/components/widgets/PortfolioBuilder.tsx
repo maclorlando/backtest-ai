@@ -87,7 +87,7 @@ export default function PortfolioBuilder({
 
   return (
     <div className="card widget-full">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Portfolio Builder</h3>
         <div className="text-right">
           <div className="text-sm text-[rgb(var(--fg-secondary))]">Total Value</div>
@@ -96,9 +96,9 @@ export default function PortfolioBuilder({
       </div>
 
       {/* Portfolio Composition Display */}
-      <div className="space-y-3 mb-6">
+      <div className="space-y-2 mb-4">
         {allocations.length === 0 ? (
-          <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
+          <div className="text-center py-4 text-[rgb(var(--fg-secondary))]">
             No assets selected. Add assets to build your portfolio.
           </div>
         ) : (
@@ -111,7 +111,7 @@ export default function PortfolioBuilder({
             const isEditing = editingIndex === index;
 
             return (
-              <div key={`${asset.id}-${index}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-3 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] gap-3">
+              <div key={`${asset.id}-${index}`} className="flex flex-col sm:flex-row sm:items-center justify-between p-2 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] gap-2">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   {/* Asset Logo */}
                   <div className="w-8 h-8 rounded-full overflow-hidden bg-[rgb(var(--bg-tertiary))] flex items-center justify-center flex-shrink-0">
@@ -215,9 +215,9 @@ export default function PortfolioBuilder({
       </div>
 
       {/* Quick Actions Section */}
-      <div className="mb-4 space-y-3">
+      <div className="mb-3 space-y-2">
         {/* Add Asset Section */}
-        <div className="p-3 bg-[rgb(var(--bg-tertiary))] rounded-lg border border-[rgb(var(--border-primary))]">
+        <div className="p-2 bg-[rgb(var(--bg-tertiary))] rounded-lg border border-[rgb(var(--border-primary))]">
           <div className="flex items-center gap-3">
             <select
               value=""
@@ -253,8 +253,8 @@ export default function PortfolioBuilder({
       </div>
 
       {/* Portfolio Summary */}
-      <div className="mt-4 pt-4 border-t border-[rgb(var(--border-primary))]">
-        <div className="grid grid-cols-2 gap-4 text-sm mb-3">
+      <div className="mt-3 pt-3 border-t border-[rgb(var(--border-primary))]">
+        <div className="grid grid-cols-2 gap-3 text-sm mb-2">
           <div>
             <div className="text-[rgb(var(--fg-secondary))]">Total Allocation</div>
             <div className={`font-semibold ${Math.abs(allocationSum - 1) > 1e-4 ? 'text-red-400' : 'text-green-400'}`}>
@@ -269,19 +269,45 @@ export default function PortfolioBuilder({
           </div>
         </div>
 
-        <div className="mb-3">
-          <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Initial Capital ($)</label>
-          <input
-            type="number"
-            value={initialCapital}
-            onChange={(e) => setInitialCapital(Number(e.target.value) || 100)}
-            min={1}
-            className="input w-full"
-          />
+        <div className="mb-2">
+          <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-1">
+            Initial Capital (USDC) <span className="text-xs text-[rgb(var(--fg-tertiary))]">• Editable</span>
+          </label>
+          <div className="relative">
+            <input
+              type="number"
+              value={initialCapital}
+              onChange={(e) => {
+                const value = parseFloat(e.target.value);
+                if (!isNaN(value) && value > 0) {
+                  setInitialCapital(value);
+                } else if (e.target.value === '') {
+                  setInitialCapital(0);
+                }
+              }}
+              onBlur={(e) => {
+                const value = parseFloat(e.target.value);
+                if (isNaN(value) || value <= 0) {
+                  setInitialCapital(100);
+                }
+              }}
+              min={1}
+              step={0.01}
+              className="input w-full pr-8 text-base font-semibold"
+              placeholder="Enter initial capital"
+              style={{ backgroundColor: 'rgb(var(--bg-secondary))', border: '2px solid rgb(var(--border-primary))' }}
+            />
+            <div className="absolute right-3 top-1/2 transform -translate-y-1/2 text-sm text-[rgb(var(--fg-tertiary))]">
+              $
+            </div>
+          </div>
+          <div className="text-xs text-[rgb(var(--fg-tertiary))] mt-0.5">
+            Starting amount for your portfolio backtest
+          </div>
         </div>
 
         {Math.abs(allocationSum - 1) > 1e-4 && (
-          <div className="mb-3 p-2 bg-red-900/20 border border-red-700 rounded-lg">
+          <div className="mb-2 p-2 bg-red-900/20 border border-red-700 rounded-lg">
             <div className="text-xs text-red-300">
               ⚠️ Portfolio allocation is not 100%. Current allocation: {(allocationSum * 100).toFixed(1)}%
             </div>

@@ -505,6 +505,10 @@ export default function Home() {
               <div className="stat-value">{result.risk?.riskReward == null ? "—" : result.risk.riskReward.toFixed(2)}</div>
               <div className="stat-label">Risk/Reward</div>
             </div>
+            <div className="stat-card">
+              <div className="stat-value">{result.metrics.volatilityPct.toFixed(2)}%</div>
+              <div className="stat-label">Volatility</div>
+            </div>
           </div>
 
           {/* Portfolio Chart */}

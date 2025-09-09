@@ -430,7 +430,6 @@ body {
 
 .widget-grid .card > *:last-child {
   flex: 1;
-  overflow-y: auto;
 }
 
 /* Compact widget variant for smaller widgets */
@@ -443,7 +442,7 @@ body {
 .widget-grid .widget-full {
   grid-column: 1 / -1;
   min-height: 320px;
-  max-height: 450px;
+  max-height: none;
 }
 
 /* Stats cards - Mobile first */
