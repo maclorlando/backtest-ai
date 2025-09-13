@@ -1,10 +1,9 @@
-"use client";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { useEffect, useState } from "react";
-import Navigation from "@/components/Navigation";
-import ErrorBoundary from "@/components/ErrorBoundary";
-import { AppProvider } from "@/lib/context/AppContext";
+import { headers } from 'next/headers';
+import ContextProvider from '../../context';
+import ThemeWrapper from '@/components/ThemeWrapper';
+import Navigation from '@/components/Navigation';
 import { MantineProvider, createTheme } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
@@ -66,11 +65,14 @@ const theme = createTheme({
 	},
 });
 
-export default function RootLayout({
+export default async function RootLayout({
 	children,
 }: Readonly<{
 	children: React.ReactNode;
 }>) {
+	const headersObj = await headers();
+	const cookies = headersObj.get('cookie');
+
 	return (
 		<html lang="en" className="dark">
 			<head>
@@ -84,49 +86,27 @@ export default function RootLayout({
 			<body
 				className={`${geistSans.variable} ${geistMono.variable} antialiased`}
 			>
-				<MantineProvider theme={theme}>
-					<Notifications 
-						position="top-left" 
-						zIndex={9999} 
-						containerWidth={320}
-						limit={3}
-						autoClose={5000}
-					/>
-					<ThemeWrapper>
-						<AppProvider>
-							<ErrorBoundary>
-								<div className="min-h-screen bg-[rgb(var(--bg-primary))]">
-									<Navigation />
-									<main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6 max-w-7xl">
-										{children}
-									</main>
-								</div>
-							</ErrorBoundary>
-						</AppProvider>
-					</ThemeWrapper>
-				</MantineProvider>
+				<ContextProvider cookies={cookies}>
+					<MantineProvider theme={theme}>
+						<Notifications 
+							position="top-left" 
+							zIndex={9999} 
+							containerWidth={320}
+							limit={3}
+							autoClose={5000}
+						/>
+						<ThemeWrapper>
+							<div className="min-h-screen bg-[rgb(var(--bg-primary))]">
+								<Navigation />
+								<main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6 max-w-7xl">
+									{children}
+								</main>
+							</div>
+						</ThemeWrapper>
+					</MantineProvider>
+				</ContextProvider>
 			</body>
 		</html>
 	);
 }
 
-function ThemeWrapper({ children }: { children: React.ReactNode }) {
-	const [theme, setTheme] = useState<string | null>(null);
-	
-	useEffect(() => {
-		const t = (typeof window !== "undefined" && window.sessionStorage.getItem("bt_theme")) || "dark";
-		setTheme(t);
-		document.documentElement.classList.toggle("dark", t !== "light");
-		
-		const handler = (e: StorageEvent) => {
-			if (e.key === "bt_theme" && e.newValue) {
-				document.documentElement.classList.toggle("dark", e.newValue !== "light");
-			}
-		};
-		
-		window.addEventListener("storage", handler);
-		return () => window.removeEventListener("storage", handler);
-	}, []);
-	
-	return <>{children}</>;
-}

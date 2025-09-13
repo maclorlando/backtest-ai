@@ -1,12 +1,9 @@
 "use client";
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { loadWallet } from "@/lib/wallet/storage";
+import { createContext, useContext, useState, ReactNode } from "react";
 
 interface AppContextType {
   currentWallet: string | null;
-  currentNetwork: number;
   setCurrentWallet: (address: string | null) => void;
-  setCurrentNetwork: (chainId: number) => void;
   removeWallet: () => void;
 }
 
@@ -14,15 +11,6 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [currentWallet, setCurrentWallet] = useState<string | null>(null);
-  const [currentNetwork, setCurrentNetwork] = useState<number>(1); // Default to Ethereum
-
-  // Load wallet on mount
-  useEffect(() => {
-    const wallet = loadWallet();
-    if (wallet?.address) {
-      setCurrentWallet(wallet.address);
-    }
-  }, []);
 
   const removeWallet = () => {
     setCurrentWallet(null);
@@ -31,9 +19,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppContext.Provider value={{
       currentWallet,
-      currentNetwork,
       setCurrentWallet,
-      setCurrentNetwork,
       removeWallet,
     }}>
       {children}

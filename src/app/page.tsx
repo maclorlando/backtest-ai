@@ -495,8 +495,26 @@ export default function Home() {
               <div className="stat-label">Volatility</div>
             </div>
             <div className="stat-card">
-              <div className="stat-value text-sm font-normal leading-tight">
-                {allocations.map(a => `${ASSET_ID_TO_SYMBOL[a.id]} ${(a.allocation * 100).toFixed(1)}%`).join(" • ")}
+              <div className="stat-value text-xs font-normal leading-tight">
+                <div className="flex flex-wrap gap-2 items-center">
+                  {allocations.map((a, index) => (
+                    <div key={a.id} className="flex items-center gap-1">
+                      {logos[a.id] && (
+                        <Image
+                          src={logos[a.id]}
+                          alt={ASSET_ID_TO_SYMBOL[a.id]}
+                          width={16}
+                          height={16}
+                          className="rounded-full"
+                        />
+                      )}
+                      <span className="text-xs">
+                        {ASSET_ID_TO_SYMBOL[a.id]} {(a.allocation * 100).toFixed(1)}%
+                      </span>
+                      {index < allocations.length - 1 && <span className="text-gray-400">•</span>}
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="stat-label">Composition</div>
             </div>

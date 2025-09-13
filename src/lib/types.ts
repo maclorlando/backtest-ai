@@ -8,7 +8,9 @@ export type AssetId =
   | "polkadot"
   | "aave"
   | "chainlink"
-  | "fartcoin";
+  | "fartcoin"
+  | "wrapped-staked-ether"
+  | "euro-coin";
 
 export interface PortfolioAsset {
   id: AssetId;
@@ -117,6 +119,8 @@ export const ASSET_ID_TO_SYMBOL: Record<AssetId, string> = {
   aave: "AAVE",
   chainlink: "LINK",
   fartcoin: "FART",
+  "wrapped-staked-ether": "wstETH",
+  "euro-coin": "EURC",
 };
 
 export const SYMBOL_TO_ASSET_ID: Record<string, AssetId> = {
@@ -130,6 +134,8 @@ export const SYMBOL_TO_ASSET_ID: Record<string, AssetId> = {
   AAVE: "aave",
   LINK: "chainlink",
   FART: "fartcoin",
+  wstETH: "wrapped-staked-ether",
+  EURC: "euro-coin",
 };
 
 // Ethereum window object for external wallet connections
