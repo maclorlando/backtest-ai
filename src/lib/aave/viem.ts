@@ -1,4 +1,6 @@
 import { Address, PublicClient, WalletClient, parseUnits, formatUnits, erc20Abi, createWalletClient, custom } from "viem";
+import { buildPublicClientWithFallback } from "@/lib/wallet/viem";
+import { DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation } from "@/lib/utils/errorHandling";
 import type { AavePoolInfo, AaveUserPosition, AaveUserSummary } from "@/lib/types";
 import { aaveClient } from "./client";
@@ -1275,16 +1277,35 @@ export async function withdrawAssetWithSDK(
 
     console.log(`Withdraw action created, sending transaction...`);
 
-    // Send transaction using viem
-    const result = await withdrawAction
-      .andThen(sendWith(walletClient))
-      .andThen(aaveClient.waitForTransaction);
+    // Log that we're proceeding with the Aave SDK approach
+    console.log(`✅ Aave SDK action created successfully, proceeding with transaction`);
+
+    // Send transaction using viem with explicit gas parameters
+    let result;
+    try {
+      result = await withdrawAction
+        .andThen(sendWith(walletClient))
+        .andThen(aaveClient.waitForTransaction);
+    } catch (sdkError) {
+      console.warn(`Aave SDK withdrawal failed, trying direct viem approach:`, sdkError);
+      
+      // Fallback to direct viem call if SDK fails
+      result = await withdrawWithDirectViem(
+        walletClient,
+        config.pool,
+        assetAddress,
+        actualWithdrawAmount,
+        targetAddress
+      );
+    }
 
     if (result.isErr()) {
-      console.error(`Withdraw failed:`, result.error);
+      const error = (result as any).error;
+      console.error(`Withdraw failed:`, error);
       
       // Handle user rejection gracefully
-      if (result.error.message.includes("User rejected") || result.error.message.includes("denied")) {
+      if (error && typeof error === 'object' && 'message' in error && 
+          (error.message.includes("User rejected") || error.message.includes("denied"))) {
         showInfoNotification(
           "Withdrawal cancelled by user",
           "Transaction Cancelled"
@@ -1293,34 +1314,64 @@ export async function withdrawAssetWithSDK(
       }
       
       // Handle gas estimation errors specifically
-      if (result.error.message.includes("gas") || result.error.message.includes("estimation")) {
-        console.error("Gas estimation error detected:", result.error.message);
-        throw new Error(`Gas estimation failed. This might be due to network congestion. Please try again in a few moments. Original error: ${result.error.message}`);
+      if (error && typeof error === 'object' && 'message' in error && 
+          (error.message.includes("gas") || error.message.includes("estimation"))) {
+        console.error("Gas estimation error detected:", error.message);
+        console.error("This might be due to high gas costs or complex transaction parameters.");
+        console.error("The Aave SDK might be creating a more complex transaction than necessary.");
+        
+        // Try fallback approach with direct viem call
+        console.log("Attempting fallback withdrawal with direct viem approach...");
+        try {
+          const fallbackResult = await withdrawWithDirectViem(
+            walletClient,
+            config.pool,
+            assetAddress,
+            actualWithdrawAmount,
+            targetAddress
+          );
+          
+          if (fallbackResult.isErr()) {
+            throw new Error(fallbackResult.error?.message || "Fallback withdrawal also failed");
+          }
+          
+          showSuccessNotification(
+            `Successfully withdrew ${actualWithdrawAmount} ${assetSymbol} using fallback method`,
+            "Withdrawal Successful"
+          );
+          return fallbackResult.value;
+        } catch (fallbackError) {
+          console.error("Fallback withdrawal also failed:", fallbackError);
+          throw new Error(`Both SDK and fallback withdrawal failed. SDK error: ${error.message}, Fallback error: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`);
+        }
       }
       
       // Handle transaction execution errors
-      if (result.error.message.includes("Transaction failed") || result.error.message.includes("execution reverted")) {
-        console.error("Transaction execution error detected:", result.error.message);
-        throw new Error(`Transaction failed. This might be due to insufficient balance, network issues, or contract state changes. Please try again. Original error: ${result.error.message}`);
+      if (error && typeof error === 'object' && 'message' in error && 
+          (error.message.includes("Transaction failed") || error.message.includes("execution reverted"))) {
+        console.error("Transaction execution error detected:", error.message);
+        throw new Error(`Transaction failed. This might be due to insufficient balance, network issues, or contract state changes. Please try again. Original error: ${error.message}`);
       }
       
       // Handle insufficient balance errors
-      if (result.error.message.includes("insufficient") || result.error.message.includes("balance")) {
-        console.error("Insufficient balance error detected:", result.error.message);
-        throw new Error(`Insufficient balance for withdrawal. Please check your available balance. Original error: ${result.error.message}`);
+      if (error && typeof error === 'object' && 'message' in error && 
+          (error.message.includes("insufficient") || error.message.includes("balance"))) {
+        console.error("Insufficient balance error detected:", error.message);
+        throw new Error(`Insufficient balance for withdrawal. Please check your available balance. Original error: ${error.message}`);
       }
       
-      throw new Error(`Withdraw failed: ${result.error.message}`);
+      const errorMessage = error && typeof error === 'object' && 'message' in error ? error.message : 'Unknown error';
+      throw new Error(`Withdraw failed: ${errorMessage}`);
     }
 
-    console.log(`Withdraw successful:`, result.value);
+    console.log(`Withdraw successful:`, (result as any).value);
 
     showSuccessNotification(
       `Successfully withdrew ${actualWithdrawAmount} ${assetSymbol} from Aave`,
       "Withdraw Successful"
     );
 
-    return result.value;
+    return (result as any).value;
   } catch (error) {
     console.error("Withdraw error details:", error);
     
@@ -1392,5 +1443,91 @@ export async function borrowAssetWithSDK(
   } catch (error) {
     showErrorNotification(error, "Borrow Failed");
     throw error;
+  }
+}
+
+// Direct viem withdrawal function as fallback for high gas issues
+async function withdrawWithDirectViem(
+  walletClient: WalletClient,
+  poolAddress: Address,
+  assetAddress: Address,
+  amount: number,
+  userAddress: Address
+): Promise<{ isErr: () => boolean; error?: any; value?: string }> {
+  try {
+    console.log(`🔄 Using direct viem withdrawal for ${assetAddress}`);
+    
+    // Get the asset decimals
+    const decimals = getTokenDecimals(assetAddress);
+    const amountWei = parseUnits(amount.toString(), decimals);
+    
+    // Aave V3 Pool ABI - withdraw function
+    const POOL_ABI = [
+      {
+        "inputs": [
+          {"internalType": "address", "name": "asset", "type": "address"},
+          {"internalType": "uint256", "name": "amount", "type": "uint256"},
+          {"internalType": "address", "name": "to", "type": "address"}
+        ],
+        "name": "withdraw",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      }
+    ] as const;
+
+    // Simulate the transaction first
+    // Get public client from the wallet client's chain
+    if (!walletClient.chain) {
+      throw new Error("Wallet client chain not available");
+    }
+    const publicClient = buildPublicClientWithFallback(walletClient.chain, DEFAULT_RPC_BY_CHAIN[walletClient.chain.id]);
+    if (!publicClient) {
+      throw new Error("Public client not available");
+    }
+
+    try {
+      await publicClient.simulateContract({
+        address: poolAddress,
+        abi: POOL_ABI,
+        functionName: "withdraw",
+        args: [assetAddress, amountWei, userAddress],
+        account: userAddress,
+      });
+      console.log("✅ Direct viem withdrawal simulation successful");
+    } catch (simulationError) {
+      console.error("❌ Direct viem withdrawal simulation failed:", simulationError);
+      throw new Error(`Withdrawal simulation failed: ${simulationError instanceof Error ? simulationError.message : 'Unknown error'}`);
+    }
+
+    // Send the transaction
+    const hash = await walletClient.writeContract({
+      address: poolAddress,
+      abi: POOL_ABI,
+      functionName: "withdraw",
+      args: [assetAddress, amountWei, userAddress],
+      account: walletClient.account!,
+      chain: walletClient.chain,
+    });
+
+    console.log(`✅ Direct viem withdrawal transaction sent: ${hash}`);
+
+    // Wait for transaction confirmation
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    
+    if (receipt.status === 'success') {
+      console.log(`✅ Direct viem withdrawal successful: ${hash}`);
+      showSuccessNotification(
+        `Successfully withdrew ${amount} tokens using direct method`,
+        "Withdrawal Successful"
+      );
+      return { isErr: () => false, value: hash };
+    } else {
+      throw new Error("Transaction failed on chain");
+    }
+
+  } catch (error) {
+    console.error("Direct viem withdrawal failed:", error);
+    return { isErr: () => true, error };
   }
 }
