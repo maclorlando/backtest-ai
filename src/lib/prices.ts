@@ -2,13 +2,16 @@ import { addDays, differenceInCalendarDays, format } from "date-fns";
 import type { AssetId, PricesByAsset, PricePoint } from "./types";
 
 // Rate limiting and retry configuration
-const RATE_LIMIT_DELAY = 1000; // Base delay in ms
+const RATE_LIMIT_DELAY = 1000; // Base delay in ms for pro keys
+const DEMO_RATE_LIMIT_DELAY = 3000; // 3 seconds for demo keys (more conservative to avoid rate limits)
 const MAX_RETRIES = 5;
 const EXPONENTIAL_BACKOFF_FACTOR = 2;
 
 // Rate limiting state
 let lastRequestTime = 0;
 let consecutiveRateLimits = 0;
+let requestQueue: Array<() => Promise<any>> = [];
+let isProcessingQueue = false;
 
 // Helper function to determine CoinGecko API endpoint and headers
 function getCoinGeckoConfig(apiKey?: string): { baseUrl: string; headers: Record<string, string> } {
@@ -41,16 +44,51 @@ function getCoinGeckoConfig(apiKey?: string): { baseUrl: string; headers: Record
   }
 }
 
+// Helper function to determine the appropriate delay based on API key type
+function getRateLimitDelay(apiKey?: string): number {
+  if (!apiKey) return RATE_LIMIT_DELAY;
+  
+  const isDemoKey = apiKey.toLowerCase().includes('demo') || apiKey.length < 20;
+  const delay = isDemoKey ? DEMO_RATE_LIMIT_DELAY : RATE_LIMIT_DELAY;
+  
+  if (isDemoKey) {
+    console.log(`Using demo API key with ${delay}ms delay between requests`);
+  }
+  
+  return delay;
+}
+
+// Request queue processor to ensure sequential requests
+async function processRequestQueue(): Promise<void> {
+  if (isProcessingQueue || requestQueue.length === 0) return;
+  
+  isProcessingQueue = true;
+  
+  while (requestQueue.length > 0) {
+    const requestFn = requestQueue.shift();
+    if (requestFn) {
+      try {
+        await requestFn();
+      } catch (error) {
+        console.error('Request in queue failed:', error);
+      }
+    }
+  }
+  
+  isProcessingQueue = false;
+}
+
 // Helper function to handle rate limiting with exponential backoff
 async function makeRateLimitedRequest<T>(
   requestFn: () => Promise<T>,
-  retryCount = 0
+  retryCount = 0,
+  apiKey?: string
 ): Promise<T> {
   try {
-    // Ensure minimum delay between requests
+    // Ensure minimum delay between requests based on API key type
     const now = Date.now();
     const timeSinceLastRequest = now - lastRequestTime;
-    const minDelay = Math.max(0, RATE_LIMIT_DELAY - timeSinceLastRequest);
+    const minDelay = Math.max(0, getRateLimitDelay(apiKey) - timeSinceLastRequest);
     
     if (minDelay > 0) {
       await new Promise(resolve => setTimeout(resolve, minDelay));
@@ -72,15 +110,15 @@ async function makeRateLimitedRequest<T>(
     if (isRateLimit && retryCount < MAX_RETRIES) {
       consecutiveRateLimits++;
       
-      // Calculate delay with exponential backoff
-      const baseDelay = RATE_LIMIT_DELAY * Math.pow(EXPONENTIAL_BACKOFF_FACTOR, retryCount);
+      // Calculate delay with exponential backoff based on API key type
+      const baseDelay = getRateLimitDelay(apiKey) * Math.pow(EXPONENTIAL_BACKOFF_FACTOR, retryCount);
       const jitter = Math.random() * 1000; // Add some randomness
       const delay = baseDelay + jitter;
       
       console.warn(`Rate limit hit, retrying in ${Math.round(delay)}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
       
       await new Promise(resolve => setTimeout(resolve, delay));
-      return makeRateLimitedRequest(requestFn, retryCount + 1);
+      return makeRateLimitedRequest(requestFn, retryCount + 1, apiKey);
     }
     
     throw error;
@@ -204,7 +242,7 @@ async function fetchCoingeckoDailyPrices(
   const config = getCoinGeckoConfig(apiKey);
   const url = `${config.baseUrl}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
 
-  const res = await makeRateLimitedRequest(async () => fetch(url, { headers: config.headers, cache: "no-store" }));
+  const res = await makeRateLimitedRequest(async () => fetch(url, { headers: config.headers, cache: "no-store" }), 0, apiKey);
   if (!res.ok) {
     throw new Error(`Failed to fetch prices for ${assetId}: ${res.status}`);
   }
@@ -411,7 +449,7 @@ export async function fetchCoinLogos(ids: AssetId[], apiKey?: string): Promise<R
   await Promise.all(
     ids.map(async (id) => {
       try {
-        const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${id}`, { headers: config.headers, cache: "force-cache" }));
+        const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${id}`, { headers: config.headers, cache: "force-cache" }), 0, apiKey);
         if (!r.ok) return;
         const data = await r.json();
         const url = data?.image?.small || data?.image?.thumb;
@@ -510,7 +548,7 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
       const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/simple/price?ids=${id}&vs_currencies=usd`, { 
         headers: config.headers, 
         cache: "no-store"
-      }));
+      }), 0, apiKey);
       
       if (!r.ok) {
         if (r.status === 429) {
@@ -553,7 +591,7 @@ export async function fetchCoinData(coinId: string, apiKey?: string): Promise<Co
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${coinId}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=false&sparkline=false`, { 
       headers: config.headers, 
       cache: "force-cache" // Cache for 1 hour
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to fetch coin data for ${coinId}: ${r.status}`);
@@ -598,7 +636,7 @@ export async function fetchMarketData(
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/markets?${params}`, { 
       headers: config.headers, 
       cache: "no-store"
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to fetch market data: ${r.status}`);
@@ -623,7 +661,7 @@ export async function fetchGlobalData(apiKey?: string): Promise<CoinGeckoGlobalD
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/global`, { 
       headers: config.headers, 
       cache: "no-store"
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to fetch global data: ${r.status}`);
@@ -648,7 +686,7 @@ export async function fetchTrendingCoins(apiKey?: string): Promise<CoinGeckoTren
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/search/trending`, { 
       headers: config.headers, 
       cache: "no-store"
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to fetch trending coins: ${r.status}`);
@@ -676,7 +714,7 @@ export async function searchCoins(
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/search?query=${encodeURIComponent(query)}`, { 
       headers: config.headers, 
       cache: "no-store"
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to search coins: ${r.status}`);
@@ -705,7 +743,7 @@ export async function fetchOHLCData(
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`, { 
       headers: config.headers, 
       cache: "no-store"
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to fetch OHLC data for ${coinId}: ${r.status}`);
@@ -730,7 +768,7 @@ export async function fetchAllCoins(apiKey?: string): Promise<Array<{ id: string
     const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/list`, { 
       headers: config.headers, 
       cache: "force-cache" // Cache for 24 hours
-    }));
+    }), 0, apiKey);
     
     if (!r.ok) {
       console.warn(`Failed to fetch all coins: ${r.status}`);
