@@ -847,8 +847,17 @@ export async function debugTransaction(
 // Get current BTC price for more accurate swap calculations
 export async function getBTCPrice(): Promise<number> {
   try {
-    // Use CoinGecko API to get current BTC price
-    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+    // Import the global rate limiter
+    const { globalRateLimit } = await import('./prices');
+    
+    // Apply global rate limiting before making the request
+    await globalRateLimit();
+    
+    // Use CoinGecko API to get current BTC price with rate limiting
+    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd', {
+      headers: { accept: "application/json" },
+      cache: "no-store"
+    });
     const data = await response.json();
     return data.bitcoin.usd;
   } catch (error) {

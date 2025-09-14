@@ -121,7 +121,16 @@ const PARASWAP_ADAPTER_ABI = [
 // Get current BTC price for calculations
 export async function getBTCPrice(): Promise<number> {
   try {
-    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+    // Import the global rate limiter
+    const { globalRateLimit } = await import('../prices');
+    
+    // Apply global rate limiting before making the request
+    await globalRateLimit();
+    
+    const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd', {
+      headers: { accept: "application/json" },
+      cache: "no-store"
+    });
     const data = await response.json();
     return data.bitcoin.usd;
   } catch (error) {

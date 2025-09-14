@@ -3,7 +3,7 @@ import type { AssetId, PricesByAsset, PricePoint } from "./types";
 
 // Rate limiting and retry configuration
 const RATE_LIMIT_DELAY = 1000; // Base delay in ms for pro keys
-const DEMO_RATE_LIMIT_DELAY = 5000; // 5 seconds for demo keys (very conservative to avoid rate limits)
+const DEMO_RATE_LIMIT_DELAY = 10000; // 10 seconds for demo keys (extremely conservative to avoid rate limits)
 const MAX_RETRIES = 5;
 const EXPONENTIAL_BACKOFF_FACTOR = 2;
 
@@ -12,6 +12,26 @@ let lastRequestTime = 0;
 let consecutiveRateLimits = 0;
 let requestQueue: Array<() => Promise<any>> = [];
 let isProcessingQueue = false;
+
+// Global rate limiter for all CoinGecko API calls
+let globalLastRequestTime = 0;
+
+// Global rate limiting function that can be used by other files
+export async function globalRateLimit(apiKey?: string): Promise<void> {
+  const isDemoKey = apiKey && (apiKey.toLowerCase().includes('demo') || apiKey.length < 20);
+  const delay = isDemoKey ? DEMO_RATE_LIMIT_DELAY : RATE_LIMIT_DELAY;
+  
+  const now = Date.now();
+  const timeSinceLastRequest = now - globalLastRequestTime;
+  const minDelay = Math.max(0, delay - timeSinceLastRequest);
+  
+  if (minDelay > 0) {
+    console.log(`Global rate limiting: waiting ${minDelay}ms before next CoinGecko request`);
+    await new Promise(resolve => setTimeout(resolve, minDelay));
+  }
+  
+  globalLastRequestTime = Date.now();
+}
 
 // Helper function to determine CoinGecko API endpoint and headers
 function getCoinGeckoConfig(apiKey?: string): { baseUrl: string; headers: Record<string, string> } {
@@ -85,16 +105,8 @@ async function makeRateLimitedRequest<T>(
   apiKey?: string
 ): Promise<T> {
   try {
-    // Ensure minimum delay between requests based on API key type
-    const now = Date.now();
-    const timeSinceLastRequest = now - lastRequestTime;
-    const minDelay = Math.max(0, getRateLimitDelay(apiKey) - timeSinceLastRequest);
-    
-    if (minDelay > 0) {
-      await new Promise(resolve => setTimeout(resolve, minDelay));
-    }
-    
-    lastRequestTime = Date.now();
+    // Use global rate limiting to ensure all CoinGecko requests are coordinated
+    await globalRateLimit(apiKey);
     const result = await requestFn();
     
     // Reset consecutive rate limits on success
