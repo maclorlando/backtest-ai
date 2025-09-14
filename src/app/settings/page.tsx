@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { IconDeviceFloppy, IconTrash, IconSun, IconMoon } from "@tabler/icons-react";
+import { getCoinGeckoApiKey, setCoinGeckoApiKey, hasCoinGeckoApiKey } from "@/lib/utils/apiKey";
 
 export default function SettingsPage() {
   const [key, setKey] = useState("");
@@ -9,7 +10,7 @@ export default function SettingsPage() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    const k = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || "" : "";
+    const k = getCoinGeckoApiKey() || "";
     const t = typeof window !== "undefined" ? (sessionStorage.getItem("bt_theme") as "light" | "dark") || "dark" : "dark";
     const c = typeof window !== "undefined" ? localStorage.getItem("bt_default_chain") || "11155111" : "11155111";
     setKey(k);
@@ -20,7 +21,7 @@ export default function SettingsPage() {
 
   function saveSettings() {
     if (typeof window === "undefined") return;
-    localStorage.setItem("bt_cg_key", key.trim());
+    setCoinGeckoApiKey(key);
     localStorage.setItem("bt_default_chain", defaultChain);
     sessionStorage.setItem("bt_theme", theme);
     
@@ -101,8 +102,8 @@ export default function SettingsPage() {
               <p className="text-xs text-[rgb(var(--fg-tertiary))] mt-1">Get your free API key from coingecko.com</p>
             </div>
             
-            <div className={`badge ${key ? 'badge-success' : ''}`}>
-              {key ? "API Key Configured" : "No API Key"}
+            <div className={`badge ${hasCoinGeckoApiKey() ? 'badge-success' : ''}`}>
+              {hasCoinGeckoApiKey() ? "API Key Configured" : "No API Key"}
             </div>
           </div>
         </div>

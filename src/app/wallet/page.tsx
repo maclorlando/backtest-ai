@@ -23,6 +23,7 @@ import { readErc20Balance, readErc20Metadata } from "@/lib/evm/erc20";
 import { fetchCurrentPricesUSD, fetchCoinData, fetchMarketData, fetchTrendingCoins, searchCoins, fetchGlobalData, type CoinGeckoMarketData, type CoinGeckoGlobalData } from "@/lib/prices";
 import { type AssetId } from "@/lib/types";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation, showWarningNotification } from "@/lib/utils/errorHandling";
+import { getCoinGeckoApiKey } from "@/lib/utils/apiKey";
 import { useApp } from "@/lib/context/AppContext";
 
 export default function WalletPage() {
@@ -255,7 +256,8 @@ export default function WalletPage() {
             });
           
           if (tokenSymbols.length > 0) {
-            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[]);
+            const apiKey = getCoinGeckoApiKey();
+            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[], apiKey);
             
             // Map the prices back to the original symbols
             const mappedPrices: Record<string, number> = {};
@@ -342,7 +344,8 @@ export default function WalletPage() {
         });
       
       if (tokenSymbols.length > 0) {
-        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[]);
+        const apiKey = getCoinGeckoApiKey();
+        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[], apiKey);
         
         // Map the prices back to the original symbols
         const mappedPrices: Record<string, number> = {};
@@ -443,7 +446,8 @@ export default function WalletPage() {
         .filter(Boolean);
 
       if (coinIds.length > 0) {
-        const marketData = await fetchMarketData(coinIds);
+        const apiKey = getCoinGeckoApiKey();
+        const marketData = await fetchMarketData(coinIds, apiKey);
         setMarketData(marketData);
       }
     } catch (error) {
@@ -930,6 +934,7 @@ export default function WalletPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
+            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">DeBank - Wallet</h1>
             <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">DeBank - Wallet</h1>
             <p className="text-[rgb(var(--fg-secondary))]">Advanced wallet management and configuration</p>
           </div>

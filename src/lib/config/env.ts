@@ -1,9 +1,6 @@
 // Environment configuration for API keys and settings
 
 export interface EnvironmentConfig {
-  // API Keys
-  coingeckoApiKey?: string;
-  
   // RPC Endpoints (optional - will use defaults if not provided)
   rpcEndpoints?: {
     [chainId: number]: string;
@@ -21,9 +18,6 @@ export interface EnvironmentConfig {
  */
 export function getEnvironmentConfig(): EnvironmentConfig {
   return {
-    // API Keys
-    coingeckoApiKey: process.env.NEXT_PUBLIC_COINGECKO_API_KEY,
-    
     // RPC Endpoints (optional)
     rpcEndpoints: {
       // You can override default RPC endpoints here

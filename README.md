@@ -18,7 +18,7 @@ DeBank provides a layered platform that starts with Aave Base markets and expand
 - **Portfolio Backtesting**: Test crypto investment strategies with historical data
 - **Wallet Integration**: EVM wallet support with ERC-20 token tracking
 - **Aave Integration**: DeFi lending and borrowing on supported networks
-- **Settings Management**: CoinGecko API integration for pricing data
+- **Settings Management**: User-configurable CoinGecko API integration for pricing data
 
 ## 📋 Pages
 
@@ -48,6 +48,20 @@ DeBank provides a layered platform that starts with Aave Base markets and expand
 npm run dev    # Start development server
 npm run test   # Run unit tests
 ```
+
+## 🔑 API Configuration
+
+DeBank uses CoinGecko API for price data. To enable enhanced features and higher rate limits:
+
+1. Get a free API key from [CoinGecko](https://www.coingecko.com/en/api)
+2. Go to `/settings` in the app
+3. Enter your API key in the "CoinGecko API Key" field
+4. Save settings
+
+The app works without an API key but with limited rate limits. With an API key, you get:
+- Higher rate limits for price fetching
+- Access to premium CoinGecko features
+- Better reliability for backtesting and portfolio analysis
 
 ## 📈 Roadmap
 

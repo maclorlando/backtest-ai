@@ -2,8 +2,9 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { IconChartLine, IconWallet, IconBuildingBank, IconSettings, IconMenu, IconX, IconSun, IconMoon, IconRoad, IconHome } from "@tabler/icons-react";
+import { IconChartLine, IconBuildingBank, IconSettings, IconMenu, IconX, IconSun, IconMoon, IconRoad, IconHome, IconArrowsExchange } from "@tabler/icons-react";
 import WalletWidget from "./WalletWidget";
+import { useGlobalModal } from "./GlobalModalProvider";
 
 const navItems = [
   {
@@ -43,6 +44,7 @@ export default function Navigation() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   const [isClient, setIsClient] = useState(false);
+  const { openLiFiWidget } = useGlobalModal();
 
   // Set client flag on mount
   useEffect(() => {
@@ -63,7 +65,7 @@ export default function Navigation() {
   };
 
   return (
-    <nav className="sticky top-0 z-50 bg-[rgb(var(--bg-primary))] border-b border-[rgb(var(--border-primary))] backdrop-blur-lg">
+    <nav className="sticky top-0 z-40 bg-[rgb(var(--bg-primary))] border-b border-[rgb(var(--border-primary))] backdrop-blur-lg">
       <div className="container mx-auto px-2 sm:px-4">
         <div className="flex items-center justify-between h-14 sm:h-16">
           {/* Logo */}
@@ -90,6 +92,19 @@ export default function Navigation() {
 
           {/* Right side actions */}
           <div className="flex items-center gap-2 sm:gap-3">
+            {/* LI.FI Swap & Bridge */}
+            <button
+              onClick={() => {
+                openLiFiWidget();
+              }}
+              className="icon-btn"
+              aria-label="Open Swap & Bridge"
+              title="Swap & Bridge"
+            >
+              <IconArrowsExchange size={18} className="sm:w-5 sm:h-5" />
+            </button>
+
+
             {/* Theme toggle */}
             <button
               onClick={toggleTheme}
@@ -134,6 +149,18 @@ export default function Navigation() {
                   </Link>
                 );
               })}
+              {/* Mobile LI.FI widget */}
+              <button
+                onClick={() => {
+                  openLiFiWidget();
+                  setIsMenuOpen(false);
+                }}
+                className="nav-item w-full justify-start"
+              >
+                <IconArrowsExchange size={18} />
+                <span>Swap & Bridge</span>
+              </button>
+
               {/* Mobile wallet widget */}
               <div className="px-3 py-2">
                 <WalletWidget />
@@ -141,6 +168,7 @@ export default function Navigation() {
             </div>
           </div>
         )}
+
       </div>
     </nav>
   );

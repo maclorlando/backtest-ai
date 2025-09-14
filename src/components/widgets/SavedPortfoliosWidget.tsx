@@ -31,6 +31,7 @@ interface SavedPortfoliosWidgetProps {
   onCompareAll: () => void;
   mounted: boolean;
   logos?: Record<string, string>;
+  comparing?: boolean;
 }
 
 export default function SavedPortfoliosWidget({
@@ -39,7 +40,8 @@ export default function SavedPortfoliosWidget({
   onLoadPortfolio,
   onCompareAll,
   mounted,
-  logos = {}
+  logos = {},
+  comparing = false
 }: SavedPortfoliosWidgetProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
 
@@ -257,10 +259,20 @@ export default function SavedPortfoliosWidget({
           <div className="p-3 bg-[rgb(var(--bg-tertiary))] rounded-lg border border-[rgb(var(--border-primary))]">
             <button
               onClick={onCompareAll}
+              disabled={comparing}
               className="btn btn-secondary w-full"
             >
-              <IconChartLine size={16} />
-              Compare All Portfolios
+              {comparing ? (
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Comparing...
+                </div>
+              ) : (
+                <>
+                  <IconChartLine size={16} />
+                  Compare All Portfolios
+                </>
+              )}
             </button>
           </div>
         )}
