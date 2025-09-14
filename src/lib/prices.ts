@@ -3,7 +3,7 @@ import type { AssetId, PricesByAsset, PricePoint } from "./types";
 
 // Rate limiting and retry configuration
 const RATE_LIMIT_DELAY = 1000; // Base delay in ms for pro keys
-const DEMO_RATE_LIMIT_DELAY = 3000; // 3 seconds for demo keys (more conservative to avoid rate limits)
+const DEMO_RATE_LIMIT_DELAY = 5000; // 5 seconds for demo keys (very conservative to avoid rate limits)
 const MAX_RETRIES = 5;
 const EXPONENTIAL_BACKOFF_FACTOR = 2;
 
@@ -52,7 +52,7 @@ function getRateLimitDelay(apiKey?: string): number {
   const delay = isDemoKey ? DEMO_RATE_LIMIT_DELAY : RATE_LIMIT_DELAY;
   
   if (isDemoKey) {
-    console.log(`Using demo API key with ${delay}ms delay between requests`);
+    console.log(`Using demo API key with ${delay}ms delay between requests (rate limit: 5 requests/minute)`);
   }
   
   return delay;
@@ -105,7 +105,8 @@ async function makeRateLimitedRequest<T>(
     // Check if it's a rate limit error (429 or specific error message)
     const isRateLimit = error.status === 429 || 
                        error.message?.includes('rate limit') ||
-                       error.message?.includes('too many requests');
+                       error.message?.includes('too many requests') ||
+                       error.message?.includes('Too Many Requests');
     
     if (isRateLimit && retryCount < MAX_RETRIES) {
       consecutiveRateLimits++;
@@ -115,7 +116,7 @@ async function makeRateLimitedRequest<T>(
       const jitter = Math.random() * 1000; // Add some randomness
       const delay = baseDelay + jitter;
       
-      console.warn(`Rate limit hit, retrying in ${Math.round(delay)}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      console.warn(`Rate limit hit (${error.status}), retrying in ${Math.round(delay)}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
       
       await new Promise(resolve => setTimeout(resolve, delay));
       return makeRateLimitedRequest(requestFn, retryCount + 1, apiKey);
@@ -407,36 +408,52 @@ export async function fetchPrices(
   const unique = Array.from(new Set(assetIds)).filter(Boolean);
   const apiKey = opts?.coingeckoApiKey;
 
-  const results = await Promise.all(
-    unique.map(async (id) => {
-      // Try CoinGecko (with or without key)
-      try {
-        const cg = await fetchCoingeckoDailyPrices(id, startDate, endDate, apiKey);
-        if (cg.length > 0) return cg;
-      } catch {
-        // swallow and try fallback
-      }
-      // Try Binance for major pairs
-      try {
-        const bin = await fetchBinanceDailyPrices(id, startDate, endDate);
-        if (bin.length > 0) return bin;
-      } catch {
-        // swallow and try fallback
-      }
-      // Stablecoin fallback
-      if (id === "usd-coin" || id === "tether") {
-        return synthesizeStablecoin(startDate, endDate);
-      }
-      // Try CoinPaprika
-      try {
-        const paprika = await fetchCoinPaprikaDailyPrices(id, startDate, endDate);
-        return paprika;
-      } catch {
-        // If all providers fail, return empty series to avoid crashing the whole request
-        return [];
-      }
-    })
-  );
+  // Check if we should use sequential requests for demo API keys
+  const isDemoKey = apiKey && (apiKey.toLowerCase().includes('demo') || apiKey.length < 20);
+  
+  const fetchAssetPrices = async (id: AssetId) => {
+    // Try CoinGecko (with or without key)
+    try {
+      const cg = await fetchCoingeckoDailyPrices(id, startDate, endDate, apiKey);
+      if (cg.length > 0) return cg;
+    } catch {
+      // swallow and try fallback
+    }
+    // Try Binance for major pairs
+    try {
+      const bin = await fetchBinanceDailyPrices(id, startDate, endDate);
+      if (bin.length > 0) return bin;
+    } catch {
+      // swallow and try fallback
+    }
+    // Stablecoin fallback
+    if (id === "usd-coin" || id === "tether") {
+      return synthesizeStablecoin(startDate, endDate);
+    }
+    // Try CoinPaprika
+    try {
+      const paprika = await fetchCoinPaprikaDailyPrices(id, startDate, endDate);
+      return paprika;
+    } catch {
+      // If all providers fail, return empty series to avoid crashing the whole request
+      return [];
+    }
+  };
+
+  let results: PricePoint[][];
+  
+  if (isDemoKey) {
+    // For demo keys, make requests sequentially to avoid rate limits
+    console.log(`Using sequential requests for demo API key (${unique.length} assets)`);
+    results = [];
+    for (const id of unique) {
+      const result = await fetchAssetPrices(id);
+      results.push(result);
+    }
+  } else {
+    // For pro keys or no key, use concurrent requests for better performance
+    results = await Promise.all(unique.map(fetchAssetPrices));
+  }
 
   const out: PricesByAsset = {};
   unique.forEach((id, i) => (out[id] = results[i]));
