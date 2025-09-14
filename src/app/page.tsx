@@ -6,8 +6,11 @@ import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestRe
 import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
 import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
 import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
+import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
+import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import PortfolioChart from "@/components/charts/PortfolioChart";
 import ComparisonChart from "@/components/charts/ComparisonChart";
+import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import DateRangeWidget from "@/components/widgets/DateRangeWidget";
 import RebalancingWidget from "@/components/widgets/RebalancingWidget";
@@ -171,6 +174,7 @@ export default function Home() {
     setSaved(next);
     localStorage.setItem("bt_portfolios", JSON.stringify(next));
     showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
+    showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
   }
 
   const allocationSum = allocations.reduce((s, a) => s + a.allocation, 0);
@@ -207,9 +211,20 @@ export default function Home() {
         }
       }, 100);
       
+      
+      // Auto-scroll to results section
+      setTimeout(() => {
+        const resultsSection = document.querySelector('.chart-container');
+        if (resultsSection) {
+          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+      
       if (Array.isArray(data?.integrity?.issues) && data.integrity.issues.length > 0) {
         showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
+        showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
       } else {
+        showSuccessNotification("Backtest Completed", "Analysis completed successfully");
         showSuccessNotification("Backtest Completed", "Analysis completed successfully");
       }
     } catch (e) {
@@ -276,6 +291,7 @@ export default function Home() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
               showErrorNotification("Comparison Error", msg);
+              showErrorNotification("Comparison Error", msg);
     } finally {
       setComparing(false);
     }
@@ -304,6 +320,7 @@ export default function Home() {
 
 
 
+
   const handleLoadPortfolio = (cfg: SavedRecord) => {
     setAllocations([...cfg.allocations]);
     setStart(cfg.start);
@@ -312,6 +329,12 @@ export default function Home() {
     setPeriodDays(cfg.periodDays ?? 30);
     setThresholdPct(cfg.thresholdPct ?? 5);
     setInitialCapital(cfg.initialCapital ?? 100);
+    showSuccessNotification("Portfolio Loaded", `Loaded portfolio configuration`);
+  };
+
+  const handleLoadPortfolioAllocations = (allocations: AllocationRow[]) => {
+    setAllocations([...allocations]);
+    showSuccessNotification("Portfolio Loaded", `Loaded portfolio allocations`);
     showSuccessNotification("Portfolio Loaded", `Loaded portfolio configuration`);
   };
 
@@ -354,14 +377,28 @@ export default function Home() {
       {/* Main Widgets */}
       <section className="widget-grid">
         <PortfolioBuilder
+        <PortfolioBuilder
           allocations={allocations}
           setAllocations={setAllocations}
           spot={spot}
           logos={logos}
           initialCapital={initialCapital}
           setInitialCapital={setInitialCapital}
+          logos={logos}
+          initialCapital={initialCapital}
+          setInitialCapital={setInitialCapital}
           onSave={saveCurrentPortfolio}
           allocationSum={allocationSum}
+          onLoadPortfolio={handleLoadPortfolioAllocations}
+        />
+
+        <SavedPortfoliosWidget
+          saved={saved}
+          setSaved={setSaved}
+          onLoadPortfolio={handleLoadPortfolio}
+          onCompareAll={compareAll}
+          mounted={mounted}
+          logos={logos}
           onLoadPortfolio={handleLoadPortfolioAllocations}
         />
 
