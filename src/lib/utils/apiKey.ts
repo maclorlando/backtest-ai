@@ -3,12 +3,18 @@
  */
 
 /**
- * Get the CoinGecko API key from localStorage
+ * Get the CoinGecko API key from localStorage, with fallback to environment variable
  * Returns undefined if not available (client-side only)
  */
 export function getCoinGeckoApiKey(): string | undefined {
   if (typeof window === "undefined") return undefined;
-  return localStorage.getItem("bt_cg_key") || undefined;
+  
+  // First try user settings from localStorage
+  const userKey = localStorage.getItem("bt_cg_key");
+  if (userKey) return userKey;
+  
+  // Fallback to environment variable
+  return process.env.NEXT_PUBLIC_COINGECKO_API_KEY || undefined;
 }
 
 /**
