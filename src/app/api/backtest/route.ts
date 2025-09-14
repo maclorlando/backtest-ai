@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = schema.parse(body) as BacktestRequest;
 
-    const cgKey = req.headers.get("x-cg-key") || undefined;
+    const cgKey = req.headers.get("x-cg-key") || process.env.NEXT_PUBLIC_COINGECKO_API_KEY || undefined;
 
     const prices = await fetchPrices(
       parsed.assets.map((a) => a.id),

@@ -23,7 +23,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid asset IDs provided" }, { status: 400 });
     }
 
-    const prices = await fetchCurrentPricesUSD(validIds as AssetId[], apiKey);
+    const finalApiKey = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY || undefined;
+    const prices = await fetchCurrentPricesUSD(validIds as AssetId[], finalApiKey);
     return NextResponse.json(prices);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
