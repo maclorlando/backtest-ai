@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import Link from "next/link";
 import { IconRocket, IconTarget, IconBuildingBank, IconCreditCard, IconTrendingUp, IconShield, IconUsers, IconCode, IconChartLine } from "@tabler/icons-react";
 
 export default function RoadmapPage() {
@@ -338,7 +339,7 @@ export default function RoadmapPage() {
             <div>
               <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Retail Users</h3>
               <p className="text-sm text-[rgb(var(--fg-secondary))] mb-4">Test the MVP with Aave Base markets</p>
-              <a href="/" className="btn btn-primary">Try MVP</a>
+              <Link href="/" className="btn btn-primary">Try MVP</Link>
             </div>
             <div>
               <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Institutions</h3>

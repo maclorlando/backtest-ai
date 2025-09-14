@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect } from "react";
-import { IconX, IconCheck, IconAlertTriangle, IconInfo } from "@tabler/icons-react";
+import { IconX, IconCheck, IconAlertTriangle, IconInfoCircle } from "@tabler/icons-react";
 
 interface NotificationProps {
   id: string;
@@ -36,9 +36,9 @@ export default function Notification({
       case "warning":
         return <IconAlertTriangle size={16} />;
       case "info":
-        return <IconInfo size={16} />;
+        return <IconInfoCircle size={16} />;
       default:
-        return <IconInfo size={16} />;
+        return <IconInfoCircle size={16} />;
     }
   };
 

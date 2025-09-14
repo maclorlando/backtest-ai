@@ -16,17 +16,18 @@ import {
 } from "@tabler/icons-react";
 import { encryptSecret, decryptSecret, validateAndNormalizePrivateKey } from "@/lib/wallet/crypto";
 import { loadWallet, saveWallet, clearWallet, loadTrackedTokens, saveTrackedTokens, type TrackedToken, searchTokens, getPopularTokens, addTrackedToken, removeTrackedToken, isTokenTracked, cleanupDuplicateTokens } from "@/lib/wallet/storage";
-import { createRandomPrivateKey, buildPublicClient, buildPublicClientWithFallback, buildWalletClient } from "@/lib/wallet/viem";
+import { buildPublicClient, buildPublicClientWithFallback } from "@/lib/wallet/viem";
 import { CHAINS, DEFAULT_RPC_BY_CHAIN } from "@/lib/evm/networks";
 import { Address, formatEther } from "viem";
 import { readErc20Balance, readErc20Metadata } from "@/lib/evm/erc20";
 import { fetchCurrentPricesUSD, fetchCoinData, fetchMarketData, fetchTrendingCoins, searchCoins, fetchGlobalData, type CoinGeckoMarketData, type CoinGeckoGlobalData } from "@/lib/prices";
+import { type AssetId } from "@/lib/types";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation, showWarningNotification } from "@/lib/utils/errorHandling";
 import { useApp } from "@/lib/context/AppContext";
 
 export default function WalletPage() {
-  const { currentNetwork, removeWallet } = useApp();
-  const chainId = currentNetwork;
+  const { removeWallet } = useApp();
+  const chainId = 8453; // Base mainnet chain ID
   const [unlockedPk, setUnlockedPk] = useState<string | null>(null);
   const [address, setAddress] = useState<string>("");
   const [showPrivateKey, setShowPrivateKey] = useState(false);
@@ -254,7 +255,7 @@ export default function WalletPage() {
             });
           
           if (tokenSymbols.length > 0) {
-            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols);
+            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[]);
             
             // Map the prices back to the original symbols
             const mappedPrices: Record<string, number> = {};
@@ -341,7 +342,7 @@ export default function WalletPage() {
         });
       
       if (tokenSymbols.length > 0) {
-        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols);
+        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[]);
         
         // Map the prices back to the original symbols
         const mappedPrices: Record<string, number> = {};
@@ -758,7 +759,7 @@ export default function WalletPage() {
       const encrypted = await encryptSecret(wallet.privateKey, createPassword);
       const walletData = { 
         address: wallet.address, 
-        encrypted, 
+        encrypted: JSON.stringify(encrypted), 
         createdAt: Date.now() 
       };
       
@@ -806,7 +807,7 @@ export default function WalletPage() {
       
       const walletData = { 
         address: account.address, 
-        encrypted, 
+        encrypted: JSON.stringify(encrypted), 
         createdAt: Date.now() 
       };
       
@@ -854,7 +855,7 @@ export default function WalletPage() {
       }
       
       const { decryptSecret } = await import("@/lib/wallet/crypto");
-      const pk = (await decryptSecret(wallet.encrypted, unlockPassword)) as `0x${string}`;
+      const pk = (await decryptSecret(JSON.parse(wallet.encrypted), unlockPassword)) as `0x${string}`;
       const { privateKeyToAccount } = await import("viem/accounts");
       const account = privateKeyToAccount(pk);
       
@@ -899,7 +900,7 @@ export default function WalletPage() {
       }
       
       const { decryptSecret } = await import("@/lib/wallet/crypto");
-      const pk = (await decryptSecret(wallet.encrypted, unlockPassword)) as `0x${string}`;
+      const pk = (await decryptSecret(JSON.parse(wallet.encrypted), unlockPassword)) as `0x${string}`;
       const { privateKeyToAccount } = await import("viem/accounts");
       const account = privateKeyToAccount(pk);
       

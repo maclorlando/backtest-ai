@@ -48,16 +48,8 @@ export default function Navigation() {
   useEffect(() => {
     setIsClient(true);
   }, []);
-  const [isClient, setIsClient] = useState(false);
-
-  // Set client flag on mount
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
 
   const toggleTheme = () => {
-    if (!isClient) return;
-    
     if (!isClient) return;
     
     const newTheme = theme === "dark" ? "light" : "dark";
@@ -107,7 +99,6 @@ export default function Navigation() {
               {theme === "dark" ? <IconSun size={18} className="sm:w-5 sm:h-5" /> : <IconMoon size={18} className="sm:w-5 sm:h-5" />}
             </button>
 
-            {/* Wallet widget */}
             {/* Wallet widget */}
             <div className="hidden sm:block">
               <WalletWidget />

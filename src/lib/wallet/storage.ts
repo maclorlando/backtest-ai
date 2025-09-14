@@ -179,7 +179,7 @@ export function searchTokens(chainId: number, query: string): Array<{ symbol: st
  * Get all popular tokens for a chain
  */
 export function getPopularTokens(chainId: number): Array<{ symbol: string; name: string; address: string; decimals: number }> {
-  return POPULAR_TOKENS[chainId as keyof typeof POPULAR_TOKENS] || [];
+  return (POPULAR_TOKENS[chainId as keyof typeof POPULAR_TOKENS] || []) as unknown as Array<{ symbol: string; name: string; address: string; decimals: number }>;
 }
 
 /**

@@ -473,7 +473,7 @@ function getMockPoolDataForChain(chainId: number): AavePoolInfo[] {
     ]
   };
   
-  const chainData = mockData[chainId.toString()];
+  const chainData = mockData[chainId.toString() as keyof typeof mockData];
   if (chainData) {
     console.log(`Using mock data for chain ${chainId}:`, chainData);
     
