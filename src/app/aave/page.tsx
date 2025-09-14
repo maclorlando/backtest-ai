@@ -1619,7 +1619,7 @@ export default function AavePage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Aave DeFi Manager</h1>
+            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">DeBank - Aave Integration</h1>
             <p className="text-[rgb(var(--fg-secondary))]">Lend, borrow, and manage your DeFi positions</p>
           </div>
           <div className="flex items-center gap-3">

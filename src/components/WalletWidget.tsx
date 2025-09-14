@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAccount, useDisconnect, useBalance, useSwitchChain } from "wagmi";
-import { IconWallet, IconLogout, IconCopy, IconExternalLink, IconBrandCoinbase } from "@tabler/icons-react";
+import { IconWallet, IconLogout, IconCopy, IconExternalLink, IconBrandCoinbase, IconCheck } from "@tabler/icons-react";
 import { showSuccessNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import { base } from "viem/chains";
 
@@ -15,20 +15,45 @@ export default function WalletWidget() {
   
   const [showMenu, setShowMenu] = useState(false);
   const [isClient, setIsClient] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Set client flag on mount
   useEffect(() => {
     setIsClient(true);
   }, []);
 
+  // Handle click outside to close menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+
+    if (showMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMenu]);
+
   const isOnBaseMainnet = (chainId: number | undefined) => {
     return chainId === base.id;
   };
 
-  const copyAddress = () => {
+  const copyAddress = async () => {
     if (!address) return;
-    navigator.clipboard.writeText(address);
-    showSuccessNotification("Address copied to clipboard", "Copied");
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      showSuccessNotification("Address copied to clipboard", "Copied");
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      showErrorNotification("Failed to copy address", "Copy Error");
+    }
   };
 
   const openExplorer = () => {
@@ -78,7 +103,9 @@ export default function WalletWidget() {
           Base Mainnet
         </div>
         
-        <appkit-button />
+        <div className="wallet-connect-wrapper">
+          <appkit-button />
+        </div>
       </div>
     );
   }
@@ -113,7 +140,7 @@ export default function WalletWidget() {
           Base Mainnet
         </div>
         
-        <div className="relative">
+        <div className="relative" ref={menuRef}>
           <button
             onClick={() => setShowMenu(!showMenu)}
             className="btn btn-secondary flex items-center gap-2"
@@ -149,21 +176,23 @@ export default function WalletWidget() {
                 <div className="space-y-2">
                   <button
                     onClick={copyAddress}
-                    className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-secondary))] flex items-center gap-2"
+                    className={`w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-primary))] flex items-center gap-2 transition-colors ${
+                      copied ? 'bg-green-900/20 text-green-400' : ''
+                    }`}
                   >
-                    <IconCopy size={14} />
-                    Copy Address
+                    {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                    {copied ? 'Copied!' : 'Copy Address'}
                   </button>
                   <button
                     onClick={openExplorer}
-                    className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-secondary))] flex items-center gap-2"
+                    className="w-full text-left p-2 rounded hover:bg-[rgb(var(--bg-primary))] flex items-center gap-2 transition-colors"
                   >
                     <IconExternalLink size={14} />
                     View on Explorer
                   </button>
                   <button
                     onClick={disconnectWallet}
-                    className="w-full text-left p-2 rounded hover:bg-red-900/20 text-red-400 flex items-center gap-2"
+                    className="w-full text-left p-2 rounded hover:bg-red-900/20 text-red-400 flex items-center gap-2 transition-colors"
                   >
                     <IconLogout size={14} />
                     Disconnect

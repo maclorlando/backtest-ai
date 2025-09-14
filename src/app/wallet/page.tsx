@@ -929,7 +929,7 @@ export default function WalletPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Wallet Manager</h1>
+            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">DeBank - Wallet</h1>
             <p className="text-[rgb(var(--fg-secondary))]">Advanced wallet management and configuration</p>
           </div>
           <div className="text-sm text-[rgb(var(--fg-secondary))]">
