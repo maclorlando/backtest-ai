@@ -302,7 +302,7 @@ export default function SavedPortfoliosWidget({
               Delete Portfolio
             </h3>
             <p className="text-[rgb(var(--fg-secondary))] mb-6">
-              Are you sure you want to delete "{showDeleteConfirm}"? This action cannot be undone.
+              Are you sure you want to delete &quot;{showDeleteConfirm}&quot;? This action cannot be undone.
             </p>
             <div className="flex gap-3">
               <button

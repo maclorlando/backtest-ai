@@ -43,11 +43,12 @@ export default function AavePage() {
   const [supplyAmount, setSupplyAmount] = useState<string>("");
   const [selectedAsset, setSelectedAsset] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"positions" | "deploy" | "supply" | "rebalance">("positions");
+  const [rebalanceTargetPortfolio, setRebalanceTargetPortfolio] = useState<string>("");
   const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; address: Address; balance: string; decimals: number }>>([]);
   const [operationOutput, setOperationOutput] = useState<string[]>([]);
   const [operationProgress, setOperationProgress] = useState<{ current: number; total: number; currentStep: string } | null>(null);
-  const [isOutputModalOpen, setIsOutputModalOpen] = useState<boolean>(false);
-  const [isOutputModalMinimized, setIsOutputModalMinimized] = useState<boolean>(false);
+  const [isOutputModalOpen, setIsOutputModalOpen] = useState<boolean>(true);
+  const [isOutputModalMinimized, setIsOutputModalMinimized] = useState<boolean>(true);
   const [rebalancingData, setRebalancingData] = useState<{
     currentBalances: Array<{ symbol: string; balance: number; value: number }>;
     targetBalances: Array<{ symbol: string; targetValue: number; targetBalance: number }>;
@@ -100,20 +101,37 @@ export default function AavePage() {
       return;
     }
 
+    // Check if a rebalance target portfolio is selected
+    if (!rebalanceTargetPortfolio || !portfolios[rebalanceTargetPortfolio]) {
+      showErrorNotification(
+        new Error("Please select a target portfolio for rebalancing"),
+        "No Target Portfolio Selected"
+      );
+      return;
+    }
+
     try {
       setLoading(true);
       clearOutput();
-      addOutput("🔄 Calculating rebalancing for saved portfolios...");
+      addOutput("🔄 Calculating rebalancing for selected portfolio...");
+      addOutput(`📋 Target Portfolio: ${rebalanceTargetPortfolio}`);
+      addOutput(`📊 Portfolio Allocations:`);
       
-      // For now, let's use a sample portfolio (in real implementation, you'd get this from saved portfolios)
-      const samplePortfolio = [
-        { symbol: "USDC", allocation: 0.4 },
-        { symbol: "cbBTC", allocation: 0.3 },
-        { symbol: "WETH", allocation: 0.3 }
-      ];
+      // Use the rebalance target portfolio as the target
+      const targetPortfolioConfig = portfolios[rebalanceTargetPortfolio];
+      const targetPortfolio = targetPortfolioConfig.allocations.map(allocation => ({
+        symbol: allocation.id,
+        allocation: allocation.allocation / 100 // Convert percentage to decimal
+      }));
+
+      // Log the target allocations
+      targetPortfolio.forEach(allocation => {
+        addOutput(`  • ${allocation.symbol}: ${(allocation.allocation * 100).toFixed(1)}%`);
+      });
+      addOutput("");
 
       const { calculateRebalancing: calcRebalancing } = await import("@/lib/aave/viem");
-      const data = await calcRebalancing(publicClient, walletAddress as Address, chainId, samplePortfolio);
+      const data = await calcRebalancing(publicClient, walletAddress as Address, chainId, targetPortfolio);
       
       setRebalancingData(data);
       
@@ -234,6 +252,14 @@ export default function AavePage() {
   useEffect(() => {
     fetchPoolPrices();
   }, [chainId]);
+
+  // Initialize operation output on page load
+  useEffect(() => {
+    addOutput("🚀 Aave Manager initialized");
+    addOutput(`🌐 Connected to: ${CHAINS[chainId]?.name || `Chain ${chainId}`}`);
+    addOutput("📊 Operation output will appear here for all actions");
+    addOutput("💡 This modal is available across all tabs");
+  }, []);
 
   const selectedCfg: SavedRecord | null = selected ? portfolios[selected] : null;
 
@@ -562,6 +588,11 @@ export default function AavePage() {
 
     try {
       setLoading(true);
+      clearOutput();
+      addOutput("🚨 Starting Emergency Withdraw All Assets...");
+      addOutput("⚠️ This will attempt to withdraw ALL available assets from Aave");
+      addOutput("");
+      
       showInfoNotification(
         `Preparing emergency withdrawal of all assets...`,
         "Emergency Withdraw Started"
@@ -572,12 +603,17 @@ export default function AavePage() {
       const totalPositions = positions.filter(pos => parseFloat(pos.supplied) > 0).length;
       
       if (totalPositions === 0) {
+        addOutput("ℹ️ No assets to withdraw - all positions are empty");
         showInfoNotification(
           "No assets to withdraw - all positions are empty",
           "Nothing to Withdraw"
         );
         return;
       }
+      
+      addOutput(`📊 Found ${totalPositions} positions with assets to withdraw`);
+      addOutput("🔄 Starting withdrawal process...");
+      addOutput("");
       
       showInfoNotification(
         `Found ${totalPositions} positions with assets. Starting withdrawal process...`,
@@ -594,6 +630,8 @@ export default function AavePage() {
         
         if (suppliedAmount > 0) {
           try {
+            addOutput(`🔄 Withdrawing ${position.symbol}: ${position.supplied} tokens`);
+            
             showInfoNotification(
               `Withdrawing maximum available ${position.symbol}...`,
               "Emergency Withdraw Progress"
@@ -619,19 +657,21 @@ export default function AavePage() {
             
             const assetAddress = config.reserves[assetSymbol].underlying as Address;
             
-            // Use a very large amount to trigger max withdrawal in the SDK
-            const maxWithdrawalAmount = "999999999999999999999999999999";
+            // Get the actual available balance instead of using a hardcoded large number
+            // This prevents residual amounts from rounding/precision issues
+            const actualBalance = position.supplied;
             
-            console.log(`Attempting max withdrawal for ${position.symbol} (${assetAddress})`);
+            console.log(`Attempting withdrawal for ${position.symbol} (${assetAddress}) with actual balance: ${actualBalance}`);
             
             await withdrawAssetWithSDK(
               walletClient,
               chainId,
               assetAddress,
-              maxWithdrawalAmount
+              actualBalance
             );
             
             completedWithdrawals++;
+            addOutput(`✅ Successfully withdrew ${position.symbol}: ${position.supplied} tokens`);
             
             showInfoNotification(
               `✅ Successfully withdrew maximum ${position.symbol}. Progress: ${completedWithdrawals}/${totalPositions}`,
@@ -645,9 +685,11 @@ export default function AavePage() {
           } catch (error) {
             console.error(`Failed to withdraw ${position.symbol}:`, error);
             failedWithdrawals++;
+            addOutput(`❌ Failed to withdraw ${position.symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
             
             // Try with exact amount if the buffered amount failed
             try {
+              addOutput(`🔄 Retrying ${position.symbol} with exact amount...`);
               showInfoNotification(
                 `Retrying ${position.symbol} with exact amount...`,
                 "Emergency Withdraw Retry"
@@ -655,8 +697,10 @@ export default function AavePage() {
               await withdrawAsset(position.symbol, position.supplied);
               completedWithdrawals++;
               failedWithdrawals--;
+              addOutput(`✅ Retry successful for ${position.symbol}`);
             } catch (retryError) {
               console.error(`Retry also failed for ${position.symbol}:`, retryError);
+              addOutput(`❌ Retry failed for ${position.symbol}: ${retryError instanceof Error ? retryError.message : 'Unknown error'}`);
               
               // For cbBTC, try with an even more conservative amount
               if (position.symbol === "cbBTC") {
@@ -688,16 +732,31 @@ export default function AavePage() {
       }
       
       // Final status update
+      addOutput("");
       if (completedWithdrawals > 0) {
         const message = failedWithdrawals > 0 
           ? `Emergency withdrawal completed with some issues. Successfully withdrew ${completedWithdrawals} out of ${totalPositions} positions. ${failedWithdrawals} failed.`
           : `🎉 Emergency withdrawal completed successfully! Withdrew all ${completedWithdrawals} positions.`;
+        
+        addOutput(`📊 Emergency Withdraw Results:`);
+        addOutput(`  ✅ Successfully withdrew: ${completedWithdrawals} positions`);
+        if (failedWithdrawals > 0) {
+          addOutput(`  ❌ Failed withdrawals: ${failedWithdrawals} positions`);
+        }
+        addOutput(`  📈 Success rate: ${Math.round((completedWithdrawals / totalPositions) * 100)}%`);
+        addOutput("");
+        addOutput("🎊 Emergency withdraw process completed!");
           
         showSuccessNotification(
           message,
           "Emergency Withdraw Complete"
         );
       } else {
+        addOutput("❌ Emergency Withdraw Failed:");
+        addOutput("  🚫 No assets were successfully withdrawn");
+        addOutput("  💡 Please try individual withdrawals or check your positions");
+        addOutput("");
+        
         showErrorNotification(
           new Error("Failed to withdraw any assets. Please try individual withdrawals."),
           "Emergency Withdraw Failed"
@@ -705,7 +764,11 @@ export default function AavePage() {
       }
       
       // Refresh positions after emergency withdraw
-      setTimeout(() => refreshPositions(), 3000);
+      addOutput("🔄 Refreshing positions...");
+      setTimeout(() => {
+        refreshPositions();
+        addOutput("✅ Positions refreshed");
+      }, 3000);
     } catch (error) {
       showErrorNotification(error, "Emergency Withdraw Failed");
     } finally {
@@ -1173,7 +1236,11 @@ export default function AavePage() {
     
     setShowCapitalConfirmation(false);
     setLoading(true);
-    setStatus("Deploying with available capital using ParaSwap + Aave supply...");
+    clearOutput();
+    addOutput("🚀 Starting Portfolio Deployment...");
+    addOutput("📋 Using ParaSwap + Aave supply strategy");
+    addOutput("💰 Deploying with available capital");
+    addOutput("");
     setStatusType("loading");
     setStatusProgress(0);
 
@@ -1199,28 +1266,29 @@ export default function AavePage() {
       console.log(`Available USDC balance: ${currentUSDCBalance}`);
       
       // Step 1: Test ParaSwap API connectivity first
-      setStatus("=== STEP 1: Testing ParaSwap API Connectivity ===");
-      setStatus((s) => s + `\nTesting ParaSwap API...`);
+      addOutput("=== STEP 1: Testing ParaSwap API Connectivity ===");
+      addOutput("🔍 Testing ParaSwap API...");
       setStatusProgress(5);
       
       const { testParaSwapAPI } = await import("@/lib/swap");
       const apiTest = await testParaSwapAPI(chainId);
       
       if (!apiTest.isWorking) {
-        setStatus((s) => s + `\n❌ ParaSwap API is not working: ${apiTest.error}`);
-        setStatus((s) => s + `\n🛑 Portfolio deployment stopped due to ParaSwap API issues.`);
-        setStatus((s) => s + `\n💡 Please try again later or use manual swapping through other DEXs.`);
+        addOutput(`❌ ParaSwap API is not working: ${apiTest.error}`);
+        addOutput("🛑 Portfolio deployment stopped due to ParaSwap API issues.");
+        addOutput("💡 Please try again later or use manual swapping through other DEXs.");
         
         setStatusType("error");
         setStatusProgress(0);
         throw new Error(`ParaSwap API is not working: ${apiTest.error}`);
       } else {
-        setStatus((s) => s + `\n✅ ParaSwap API is working!`);
+        addOutput("✅ ParaSwap API is working!");
       }
       
       // Step 2: Multi-swap USDC to portfolio assets using ParaSwap
-      setStatus((s) => s + `\n\n=== STEP 2: Multi-Swapping USDC to Portfolio Assets ===`);
-      setStatus((s) => s + `\nUsing ParaSwap multi-swap to convert USDC to portfolio assets...`);
+      addOutput("");
+      addOutput("=== STEP 2: Multi-Swapping USDC to Portfolio Assets ===");
+      addOutput("🔄 Using ParaSwap multi-swap to convert USDC to portfolio assets...");
       setStatusProgress(10);
       
       const pub = buildPublicClientWithFallback(chain, rpc);
@@ -1314,21 +1382,22 @@ export default function AavePage() {
         } else {
           // Unknown asset - skip it but log a warning
           console.warn(`Unknown asset ID: ${asset.id}, skipping...`);
-          setStatus((s) => s + `\n  ⚠️ Warning: Unknown asset ${asset.id}, skipping...`);
+          addOutput(`  ⚠️ Warning: Unknown asset ${asset.id}, skipping...`);
         }
       }
       
       // Execute multi-swap if we have swaps to perform
       if (swaps.length > 0) {
-        setStatus((s) => s + `\n\n🔄 Executing multi-swap for ${swaps.length} assets...`);
+        addOutput("");
+        addOutput(`🔄 Executing multi-swap for ${swaps.length} assets...`);
         
         try {
           const { multiSwapTokens } = await import("@/lib/swap");
           const multiSwapHash = await multiSwapTokens(walletClient, swaps, 1);
-          setStatus((s) => s + ` ✅ Multi-swap completed successfully (tx: ${multiSwapHash.slice(0, 10)}...)`);
+          addOutput(` ✅ Multi-swap completed successfully (tx: ${multiSwapHash.slice(0, 10)}...)`);
           
           // Wait for transactions to be processed
-          setStatus((s) => s + `\n  ⏳ Waiting for transactions to be processed...`);
+          addOutput("  ⏳ Waiting for transactions to be processed...");
           await new Promise(resolve => setTimeout(resolve, 5000));
           
           // Get balances for all swapped assets
@@ -1365,18 +1434,18 @@ export default function AavePage() {
               });
             } else {
               console.warn(`${symbol} balance is 0 after swap, this might indicate a swap issue`);
-              setStatus((s) => s + `\n  ⚠️ Warning: ${symbol} balance is 0 after swap`);
+              addOutput(`  ⚠️ Warning: ${symbol} balance is 0 after swap`);
             }
           }
           
         } catch (multiSwapError) {
           console.error("Multi-swap failed:", multiSwapError);
-          setStatus((s) => s + ` ❌ Multi-swap failed: ${multiSwapError instanceof Error ? multiSwapError.message : 'Unknown error'}`);
-          setStatus((s) => s + `\n  🛑 Portfolio deployment stopped due to multi-swap failure.`);
+          addOutput(` ❌ Multi-swap failed: ${multiSwapError instanceof Error ? multiSwapError.message : 'Unknown error'}`);
+          addOutput("  🛑 Portfolio deployment stopped due to multi-swap failure.");
           throw new Error(`Multi-swap failed: ${multiSwapError instanceof Error ? multiSwapError.message : 'Unknown error'}`);
         }
       } else {
-        setStatus((s) => s + `\n  ℹ️ No swaps needed - only USDC in portfolio`);
+        addOutput("  ℹ️ No swaps needed - only USDC in portfolio");
       }
       
       // Consolidate USDC amounts if multiple allocations fell back to USDC
@@ -1405,8 +1474,9 @@ export default function AavePage() {
       }
 
       // Step 3: Supply all assets directly to Aave
-      setStatus((s) => s + `\n\n=== STEP 3: Supplying Assets to Aave ===`);
-      setStatus((s) => s + `\nSupplying all portfolio assets directly to Aave...`);
+      addOutput("");
+      addOutput("=== STEP 3: Supplying Assets to Aave ===");
+      addOutput("🏦 Supplying all portfolio assets directly to Aave...");
       setStatusProgress(55);
       
       // Supply each asset to Aave
@@ -1421,11 +1491,11 @@ export default function AavePage() {
         // Skip assets with 0 balance
         if (parseFloat(assetAmount.amount) === 0) {
           console.warn(`Skipping ${assetAmount.symbol} with 0 balance`);
-          setStatus((s) => s + `\n  ⚠️ Skipping ${assetAmount.symbol} (0 balance)`);
+          addOutput(`  ⚠️ Skipping ${assetAmount.symbol} (0 balance)`);
           continue;
         }
 
-        setStatus((s) => s + `\n  Step ${3 + completedAssets}/${3 + consolidatedAssetAmounts.length}: Supplying ${assetAmount.amount} ${assetAmount.symbol} to Aave...`);
+        addOutput(`  Step ${3 + completedAssets}/${3 + consolidatedAssetAmounts.length}: Supplying ${assetAmount.amount} ${assetAmount.symbol} to Aave...`);
         
         // Determine decimals based on asset type
         const decimals = assetAmount.symbol === "cbBTC" ? 8 :  // cbBTC: 8 decimals
@@ -1440,14 +1510,14 @@ export default function AavePage() {
         const minimumAmount = Math.pow(10, -decimals) * 10; // 10 units of smallest denomination
         
         if (amountNum < minimumAmount) {
-          setStatus((s) => s + ` ⚠️ Skipping ${assetAmount.symbol} - amount too small (${assetAmount.amount})`);
+          addOutput(` ⚠️ Skipping ${assetAmount.symbol} - amount too small (${assetAmount.amount})`);
           console.warn(`Skipping supply of ${assetAmount.amount} ${assetAmount.symbol} - amount too small`);
           completedAssets++;
           continue;
         }
         
         try {
-          setStatus((s) => s + `\n    🔄 Checking balance and preparing approval...`);
+          addOutput(`    🔄 Checking balance and preparing approval...`);
         
         // Approve and supply the asset
         await checkAndApproveErc20(
@@ -1459,7 +1529,7 @@ export default function AavePage() {
           decimals
         );
           
-          setStatus((s) => s + `\n    🔄 Approval confirmed, executing supply transaction...`);
+          addOutput(`    🔄 Approval confirmed, executing supply transaction...`);
         
         await supplyToAave(
           pub, 
@@ -1470,11 +1540,11 @@ export default function AavePage() {
           decimals
         );
         
-          setStatus((s) => s + ` ✅ Successfully supplied ${assetAmount.amount} ${assetAmount.symbol} to Aave`);
+          addOutput(` ✅ Successfully supplied ${assetAmount.amount} ${assetAmount.symbol} to Aave`);
           
         } catch (error) {
           console.error(`Failed to supply ${assetAmount.symbol}:`, error);
-          setStatus((s) => s + ` ❌ Failed to supply ${assetAmount.symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          addOutput(` ❌ Failed to supply ${assetAmount.symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
           throw new Error(`Failed to supply ${assetAmount.amount} ${assetAmount.symbol} to Aave: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
         
@@ -1483,25 +1553,29 @@ export default function AavePage() {
         
         // Add delay between supplies for better UX
         if (completedAssets < consolidatedAssetAmounts.length) {
-          setStatus((s) => s + `\n    ⏳ Waiting 2 seconds before next supply...`);
+          addOutput(`    ⏳ Waiting 2 seconds before next supply...`);
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
       
       setStatusProgress(95);
-      setStatus((s) => s + `\n\n=== DEPLOYMENT COMPLETE ===`);
-      setStatus((s) => s + `\n🎉 Successfully deployed portfolio using ParaSwap + Aave supply!`);
-      setStatus((s) => s + `\n\n📊 Portfolio Summary:`);
+      addOutput("");
+      addOutput("=== DEPLOYMENT COMPLETE ===");
+      addOutput("🎉 Successfully deployed portfolio using ParaSwap + Aave supply!");
+      addOutput("");
+      addOutput("📊 Portfolio Summary:");
       
       for (const assetAmount of consolidatedAssetAmounts) {
-        setStatus((s) => s + `\n  • ${assetAmount.amount} ${assetAmount.symbol} (from ${assetAmount.usdcAmount} USDC)`);
+        addOutput(`  • ${assetAmount.amount} ${assetAmount.symbol} (from ${assetAmount.usdcAmount} USDC)`);
       }
       
-      setStatus((s) => s + `\n\n✅ All steps completed successfully:`);
-      setStatus((s) => s + `\n  1. ✅ ParaSwap API connectivity verified`);
-      setStatus((s) => s + `\n  2. ✅ USDC swapped to portfolio assets`);
-      setStatus((s) => s + `\n  3. ✅ Assets supplied to Aave protocol`);
-      setStatus((s) => s + `\n\n💡 Your assets are now earning interest on Aave!`);
+      addOutput("");
+      addOutput("✅ All steps completed successfully:");
+      addOutput("  1. ✅ ParaSwap API connectivity verified");
+      addOutput("  2. ✅ USDC swapped to portfolio assets");
+      addOutput("  3. ✅ Assets supplied to Aave protocol");
+      addOutput("");
+      addOutput("💡 Your assets are now earning interest on Aave!");
       
       setStatusType("success");
       setStatusProgress(100);
@@ -1514,7 +1588,8 @@ export default function AavePage() {
       const aaveError = parseAaveError(error, { chainId });
       setCurrentError(aaveError);
       setStatusType("error");
-      setStatus((s) => s + `\n\n❌ Deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      addOutput("");
+      addOutput(`❌ Deployment failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       showErrorNotification(error, "Portfolio Deployment Failed");
     } finally {
       setLoading(false);
@@ -1874,7 +1949,7 @@ export default function AavePage() {
                 </div>
               ) : (
                 <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
-                  No market data available for {CHAINS[chainId]?.name || `Chain ${chainId}`}. Click "Refresh Market Data" to fetch current market information.
+                  No market data available for {CHAINS[chainId]?.name || `Chain ${chainId}`}. Click &quot;Refresh Market Data&quot; to fetch current market information.
                 </div>
               )}
             </div>
@@ -1973,67 +2048,6 @@ export default function AavePage() {
                 </div>
               )}
               
-              {status && (
-                <div className="card mb-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded-full ${
-                        statusType === "success" ? "bg-green-500" :
-                        statusType === "error" ? "bg-red-500" :
-                        statusType === "warning" ? "bg-yellow-500" :
-                        "bg-blue-500"
-                      }`}></div>
-                      <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">
-                        Deployment Status
-                      </h3>
-                      <span className={`badge ${
-                        statusType === "success" ? "badge-success" :
-                        statusType === "error" ? "badge-error" :
-                        statusType === "warning" ? "badge-warning" :
-                        "badge-primary"
-                      }`}>
-                        {statusType.toUpperCase()}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => {
-                    setStatus("");
-                    setStatusType("info");
-                    setStatusProgress(undefined);
-                  }}
-                      className="btn btn-sm btn-ghost"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                  
-                  {statusProgress !== undefined && (
-                    <div className="mb-4">
-                      <div className="flex justify-between text-sm text-[rgb(var(--fg-secondary))] mb-1">
-                        <span>Progress</span>
-                        <span>{Math.round(statusProgress)}%</span>
-                      </div>
-                      <div className="w-full bg-[rgb(var(--bg-secondary))] rounded-full h-2">
-                        <div 
-                          className={`h-2 rounded-full transition-all duration-300 ${
-                            statusType === "success" ? "bg-green-500" :
-                            statusType === "error" ? "bg-red-500" :
-                            statusType === "warning" ? "bg-yellow-500" :
-                            "bg-blue-500"
-                          }`}
-                          style={{ width: `${statusProgress}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="bg-[rgb(var(--bg-secondary))] rounded-lg p-4 max-h-96 overflow-y-auto">
-                    <pre className="text-sm text-[rgb(var(--fg-primary))] whitespace-pre-wrap font-mono leading-relaxed">
-                      {status}
-                    </pre>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -2043,7 +2057,7 @@ export default function AavePage() {
           <div className="card">
             <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Supply Assets</h3>
             <p className="text-sm text-[rgb(var(--fg-secondary))] mb-4">
-              Supply assets to Aave to earn interest and use as collateral. You'll receive aTokens (e.g., aUSDC) that represent your supplied assets.
+              Supply assets to Aave to earn interest and use as collateral. You&apos;ll receive aTokens (e.g., aUSDC) that represent your supplied assets.
             </p>
             
             <div className="mb-6 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
@@ -2187,6 +2201,48 @@ export default function AavePage() {
               Rebalance your Aave positions and wallet assets to match a target portfolio allocation. This feature analyzes your current holdings and suggests actions to achieve your desired asset allocation.
             </p>
             
+            {/* Target Portfolio Selection */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">
+                Select Target Portfolio for Rebalancing
+              </label>
+              <select
+                value={rebalanceTargetPortfolio}
+                onChange={(e) => setRebalanceTargetPortfolio(e.target.value)}
+                className="input w-full"
+              >
+                <option value="">Choose a target portfolio...</option>
+                {Object.keys(portfolios).map((portfolioName) => (
+                  <option key={portfolioName} value={portfolioName}>
+                    {portfolioName}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Portfolio Selection Status */}
+            {rebalanceTargetPortfolio && portfolios[rebalanceTargetPortfolio] ? (
+              <div className="mb-6 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <h4 className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">Target Portfolio Selected</h4>
+                <div className="text-xs text-blue-700 dark:text-blue-300">
+                  <div className="font-medium mb-1">Portfolio: {rebalanceTargetPortfolio}</div>
+                  <div className="space-y-1">
+                    {portfolios[rebalanceTargetPortfolio].allocations.map((allocation, index) => (
+                      <div key={index}>• {allocation.id}: {allocation.allocation}%</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-6 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                <h4 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-2">⚠️ No Target Portfolio Selected</h4>
+                <div className="text-xs text-yellow-700 dark:text-yellow-300">
+                  <div>Please select a target portfolio from the dropdown above.</div>
+                  <div>The rebalancing will use that portfolio as the target allocation.</div>
+                </div>
+              </div>
+            )}
+            
             <div className="mb-6 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
               <h4 className="text-sm font-medium text-green-800 dark:text-green-200 mb-2">How Rebalancing Works</h4>
               <div className="text-xs text-green-700 dark:text-green-300">
@@ -2200,7 +2256,7 @@ export default function AavePage() {
             <div className="space-y-4">
               <button
                 onClick={calculateRebalancing}
-                disabled={loading || !walletAddress}
+                disabled={loading || !walletAddress || !rebalanceTargetPortfolio || !portfolios[rebalanceTargetPortfolio]}
                 className="btn btn-primary w-full"
               >
                 <IconRefresh size={16} className="mr-2" />
@@ -2306,36 +2362,86 @@ export default function AavePage() {
 
       {/* Floating Operation Output Modal */}
       {isOutputModalOpen && (
-        <div className="fixed bottom-4 right-4 z-50">
+        <div className={`fixed z-50 transition-all duration-300 ${
+          isOutputModalMinimized ? 'bottom-4 right-4' : 'bottom-4 right-4 top-4'
+        }`}>
           <div className={`bg-[rgb(var(--bg-primary))] border border-[rgb(var(--border-primary))] rounded-lg shadow-2xl transition-all duration-300 ${
-            isOutputModalMinimized ? 'w-80 h-12' : 'w-96 h-96'
+            isOutputModalMinimized ? 'w-80 h-12' : 'w-96 max-h-[calc(100vh-2rem)]'
           }`}>
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-3 border-b border-[rgb(var(--border-primary))]">
-              <div className="flex items-center gap-2">
-                <h4 className="text-sm font-semibold text-[rgb(var(--fg-primary))]">Operation Output</h4>
-                {operationOutput.length > 0 && (
-                  <span className="badge badge-primary badge-sm">{operationOutput.length}</span>
+            <div className={`flex items-center justify-between border-b border-[rgb(var(--border-primary))] transition-all duration-300 ${
+              isOutputModalMinimized ? 'p-2' : 'p-3'
+            }`}>
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {/* Status Indicator */}
+                {(status || operationProgress || loading) && (
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    statusType === "success" ? "bg-green-500" :
+                    statusType === "error" ? "bg-red-500" :
+                    statusType === "warning" ? "bg-yellow-500" :
+                    (operationProgress || loading) ? "bg-blue-500 animate-pulse" :
+                    "bg-gray-500"
+                  }`}></div>
+                )}
+                
+                <h4 className={`font-semibold text-[rgb(var(--fg-primary))] transition-all duration-300 ${
+                  isOutputModalMinimized ? 'text-xs' : 'text-sm'
+                }`}>Operation Output</h4>
+                
+                {/* Status Badge */}
+                {status && (
+                  <span className={`badge transition-all duration-300 ${
+                    isOutputModalMinimized ? 'badge-xs text-xs px-1 py-0' : 'badge-sm'
+                  } ${
+                    statusType === "success" ? "badge-success" :
+                    statusType === "error" ? "badge-error" :
+                    statusType === "warning" ? "badge-warning" :
+                    "badge-primary"
+                  }`}>
+                    {statusType.toUpperCase()}
+                  </span>
+                )}
+                
+                {/* Output Count Badge */}
+                {operationOutput.length > 0 && !status && (
+                  <span className={`badge badge-primary transition-all duration-300 ${
+                    isOutputModalMinimized ? 'badge-xs text-xs px-1 py-0' : 'badge-sm'
+                  }`}>{operationOutput.length}</span>
+                )}
+                
+                {/* Active Operation Indicator */}
+                {(operationProgress || loading) && (
+                  <span className={`badge transition-all duration-300 ${
+                    isOutputModalMinimized ? 'badge-xs text-xs px-1 py-0' : 'badge-sm'
+                  } badge-info animate-pulse`}>
+                    {loading ? "ACTIVE" : "PROGRESS"}
+                  </span>
                 )}
               </div>
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setIsOutputModalMinimized(!isOutputModalMinimized)}
-                  className="btn btn-ghost btn-xs"
+                  className={`btn btn-ghost transition-all duration-300 ${
+                    isOutputModalMinimized ? 'btn-xs' : 'btn-xs'
+                  }`}
                   title={isOutputModalMinimized ? "Expand" : "Minimize"}
                 >
                   {isOutputModalMinimized ? <IconMaximize size={12} /> : <IconMinimize size={12} />}
                 </button>
                 <button
                   onClick={clearOutput}
-                  className="btn btn-ghost btn-xs"
+                  className={`btn btn-ghost transition-all duration-300 ${
+                    isOutputModalMinimized ? 'btn-xs' : 'btn-xs'
+                  }`}
                   title="Clear output"
                 >
                   <IconRefresh size={12} />
                 </button>
                 <button
                   onClick={() => setIsOutputModalOpen(false)}
-                  className="btn btn-ghost btn-xs"
+                  className={`btn btn-ghost transition-all duration-300 ${
+                    isOutputModalMinimized ? 'btn-xs' : 'btn-xs'
+                  }`}
                   title="Close"
                 >
                   <IconX size={12} />
@@ -2343,36 +2449,74 @@ export default function AavePage() {
               </div>
             </div>
 
+            {/* Progress Bar - Always Visible */}
+            {(operationProgress || statusProgress !== undefined || loading) && (
+              <div className={`border-b border-[rgb(var(--border-primary))] transition-all duration-300 ${
+                isOutputModalMinimized ? 'p-2' : 'p-3'
+              }`}>
+                <div className={`flex items-center justify-between mb-1 ${
+                  isOutputModalMinimized ? 'text-xs' : 'text-sm'
+                }`}>
+                  <span className="font-medium text-[rgb(var(--fg-primary))] truncate">
+                    {operationProgress?.currentStep || 
+                     (loading && "Operation in progress...") ||
+                     (status && "Operation in progress...") ||
+                     "Processing..."}
+                  </span>
+                  <span className="text-[rgb(var(--fg-secondary))] flex-shrink-0 ml-2">
+                    {operationProgress ? 
+                      `${operationProgress.current}/${operationProgress.total}` : 
+                      statusProgress !== undefined ? `${Math.round(statusProgress)}%` :
+                      loading ? "..." : ''
+                    }
+                  </span>
+                </div>
+                <div className={`w-full bg-[rgb(var(--bg-secondary))] rounded-full ${
+                  isOutputModalMinimized ? 'h-1' : 'h-2'
+                }`}>
+                  <div 
+                    className={`rounded-full transition-all duration-300 ease-out ${
+                      isOutputModalMinimized ? 'h-1' : 'h-2'
+                    } ${
+                      statusType === "success" ? "bg-green-500" :
+                      statusType === "error" ? "bg-red-500" :
+                      statusType === "warning" ? "bg-yellow-500" :
+                      loading ? "bg-blue-500 animate-pulse" :
+                      "bg-blue-500"
+                    }`}
+                    style={{ 
+                      width: operationProgress ? 
+                        `${(operationProgress.current / operationProgress.total) * 100}%` :
+                        statusProgress !== undefined ? `${statusProgress}%` : 
+                        loading ? '100%' : '0%'
+                    }}
+                  ></div>
+                </div>
+                {!isOutputModalMinimized && (
+                  <div className="mt-1 text-xs text-[rgb(var(--fg-secondary))]">
+                    {operationProgress ? 
+                      `${Math.round((operationProgress.current / operationProgress.total) * 100)}% Complete` :
+                      statusProgress !== undefined ? `${Math.round(statusProgress)}% Complete` : ''
+                    }
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Modal Content */}
             {!isOutputModalMinimized && (
-              <div className="p-3 h-full flex flex-col">
-                {/* Progress Bar */}
-                {operationProgress && (
-                  <div className="mb-3 p-3 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))]">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-medium text-[rgb(var(--fg-primary))]">
-                        {operationProgress.currentStep}
-                      </span>
-                      <span className="text-xs text-[rgb(var(--fg-secondary))]">
-                        {operationProgress.current} / {operationProgress.total}
-                      </span>
-                    </div>
-                    <div className="w-full bg-[rgb(var(--bg-tertiary))] rounded-full h-1.5">
-                      <div 
-                        className="bg-[rgb(var(--accent-primary))] h-1.5 rounded-full transition-all duration-300 ease-out"
-                        style={{ 
-                          width: `${(operationProgress.current / operationProgress.total) * 100}%` 
-                        }}
-                      ></div>
-                    </div>
-                    <div className="mt-1 text-xs text-[rgb(var(--fg-secondary))]">
-                      {Math.round((operationProgress.current / operationProgress.total) * 100)}% Complete
+              <div className="p-3 flex flex-col min-h-0 flex-1">
+                {/* Status Display */}
+                {status && (
+                  <div className="mb-3 p-3 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] flex-shrink-0">
+                    <div className="text-sm text-[rgb(var(--fg-primary))] whitespace-pre-wrap font-mono leading-relaxed max-h-32 overflow-y-auto">
+                      {status}
                     </div>
                   </div>
                 )}
                 
                 {/* Output Log */}
-                <div className="flex-1 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] p-3 overflow-y-auto">
+                <div className="flex-1 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] p-3 overflow-y-auto min-h-0">
                   <div className="space-y-1">
                     {operationOutput.length === 0 ? (
                       <div className="text-xs text-[rgb(var(--fg-secondary))] text-center py-4">
@@ -2380,7 +2524,7 @@ export default function AavePage() {
                       </div>
                     ) : (
                       operationOutput.map((line, index) => (
-                        <div key={index} className="text-xs font-mono text-[rgb(var(--fg-secondary))] leading-relaxed">
+                        <div key={index} className="text-xs font-mono text-[rgb(var(--fg-secondary))] leading-relaxed break-words">
                           {line}
                         </div>
                       ))
@@ -2398,13 +2542,17 @@ export default function AavePage() {
         <div className="fixed bottom-4 right-4 z-40">
           <button
             onClick={() => setIsOutputModalOpen(true)}
-            className="btn btn-primary btn-circle shadow-lg hover:shadow-xl transition-all duration-200"
+            className={`btn btn-circle shadow-lg hover:shadow-xl transition-all duration-200 ${
+              (operationProgress || loading) ? 'btn-info animate-pulse' : 'btn-primary'
+            }`}
             title="View Operation Output"
           >
             <div className="relative">
               <IconRefresh size={20} />
               {operationOutput.length > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                <span className={`absolute -top-1 -right-1 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center ${
+                  (operationProgress || loading) ? 'bg-blue-500 animate-pulse' : 'bg-red-500'
+                }`}>
                   {operationOutput.length}
                 </span>
               )}

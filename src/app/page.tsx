@@ -386,7 +386,6 @@ export default function Home() {
           onCompareAll={compareAll}
           mounted={mounted}
           logos={logos}
-          onLoadPortfolio={handleLoadPortfolioAllocations}
         />
 
         <DateRangeWidget
