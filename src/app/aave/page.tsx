@@ -20,9 +20,6 @@ import { useApp } from "@/lib/context/AppContext";
 // Import mock data function for fallback
 import { getMockPoolDataForChain } from "@/lib/aave/marketData";
 
-// Import mock data function for fallback
-import { getMockPoolDataForChain } from "@/lib/aave/marketData";
-
 type SavedRecord = {
   allocations: { id: AssetId; allocation: number }[];
   start: string; end: string; mode: "none" | "periodic" | "threshold";
@@ -309,28 +306,13 @@ export default function AavePage() {
         setTimeout(() => reject(new Error('Request timeout - rate limit may have been hit')), 30000);
       });
       
-      console.log(`=== Starting fetchPoolPrices for chain ${chainId} ===`);
-      
-      // Add timeout protection for the entire operation
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Request timeout - rate limit may have been hit')), 30000);
-      });
-      
       // Use the new market data function to fetch all pool data at once
-      const poolDataPromise = retryOperation(
       const poolDataPromise = retryOperation(
         () => fetchAllPoolData(chainId),
         2, // reduced retries to avoid rate limiting
         2000 // increased delay between retries
-        2, // reduced retries to avoid rate limiting
-        2000 // increased delay between retries
       );
       
-      const poolData = await Promise.race([poolDataPromise, timeoutPromise]) as AavePoolInfo[];
-      
-      console.log(`=== Raw pool data received for chain ${chainId}:`, poolData);
-      console.log(`=== Data type:`, typeof poolData);
-      console.log(`=== Array length:`, Array.isArray(poolData) ? poolData.length : 'Not an array');
       const poolData = await Promise.race([poolDataPromise, timeoutPromise]) as AavePoolInfo[];
       
       console.log(`=== Raw pool data received for chain ${chainId}:`, poolData);
@@ -341,18 +323,12 @@ export default function AavePage() {
       if (poolData && Array.isArray(poolData) && poolData.length > 0) {
         console.log(`=== First pool data item:`, poolData[0]);
         console.log(`=== APY values check for chain ${chainId}:`);
-      if (poolData && Array.isArray(poolData) && poolData.length > 0) {
-        console.log(`=== First pool data item:`, poolData[0]);
-        console.log(`=== APY values check for chain ${chainId}:`);
         poolData.forEach((pool, index) => {
-          console.log(`${index + 1}. ${pool.symbol}: supplyAPY=${pool.supplyAPY}, borrowAPY=${pool.borrowAPY}, utilizationRate=${pool.utilizationRate}`);
           console.log(`${index + 1}. ${pool.symbol}: supplyAPY=${pool.supplyAPY}, borrowAPY=${pool.borrowAPY}, utilizationRate=${pool.utilizationRate}`);
           console.log(`  - supplyAPY type: ${typeof pool.supplyAPY}, isNaN: ${isNaN(pool.supplyAPY)}`);
           console.log(`  - borrowAPY type: ${typeof pool.borrowAPY}, isNaN: ${isNaN(pool.borrowAPY)}`);
           console.log(`  - utilizationRate type: ${typeof pool.utilizationRate}, isNaN: ${isNaN(pool.utilizationRate)}`);
         });
-        
-        setPoolInfo(poolData);
         
         setPoolInfo(poolData);
         showSuccessNotification(
@@ -364,24 +340,12 @@ export default function AavePage() {
         // Always set some data to ensure table renders
         const mockData = getMockPoolDataForChain(chainId);
         setPoolInfo(mockData);
-        console.log(`=== No valid pool data received for chain ${chainId}, using mock data`);
-        // Always set some data to ensure table renders
-        const mockData = getMockPoolDataForChain(chainId);
-        setPoolInfo(mockData);
         showInfoNotification(
-          `Using mock data for ${CHAINS[chainId]?.name || `Chain ${chainId}`}. Real data may be temporarily unavailable due to rate limits.`,
-          "Using Mock Data"
           `Using mock data for ${CHAINS[chainId]?.name || `Chain ${chainId}`}. Real data may be temporarily unavailable due to rate limits.`,
           "Using Mock Data"
         );
       }
     } catch (error) {
-      console.error(`=== Error in fetchPoolPrices for chain ${chainId}:`, error);
-      
-      // Always set some data to ensure table renders
-      const mockData = getMockPoolDataForChain(chainId);
-      setPoolInfo(mockData);
-      
       console.error(`=== Error in fetchPoolPrices for chain ${chainId}:`, error);
       
       // Always set some data to ensure table renders

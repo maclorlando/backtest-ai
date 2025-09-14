@@ -128,10 +128,7 @@ body {
   justify-content: center;
   border-radius: 8px;
   padding: 10px 16px;
-  border-radius: 8px;
-  padding: 10px 16px;
   font-weight: 600;
-  font-size: 13px;
   font-size: 13px;
   transition: all 0.2s ease;
   border: none;
@@ -147,17 +144,7 @@ body {
     padding: 12px 24px;
     font-size: 14px;
     gap: 8px;
-  }
-  gap: 6px;
-  white-space: nowrap;
-}
-
-@media (min-width: 640px) {
-  .btn {
-    border-radius: 12px;
-    padding: 12px 24px;
-    font-size: 14px;
-    gap: 8px;
+    white-space: nowrap;
   }
 }
 
@@ -290,16 +277,12 @@ body {
 }
 
 /* Input styles - Mobile first */
-/* Input styles - Mobile first */
 .input {
   background: rgb(var(--bg-secondary));
   border: 1px solid rgb(var(--border-primary));
   border-radius: 8px;
   padding: 10px 12px;
-  border-radius: 8px;
-  padding: 10px 12px;
   color: rgb(var(--fg-primary));
-  font-size: 13px;
   font-size: 13px;
   transition: all 0.2s ease;
   width: 100%;
@@ -311,7 +294,6 @@ body {
     padding: 12px 16px;
     font-size: 14px;
   }
-  width: 100%;
 }
 
 @media (min-width: 640px) {
@@ -431,16 +413,6 @@ body {
     border-radius: 12px;
     font-size: 14px;
   }
-  font-size: 13px;
-}
-
-@media (min-width: 640px) {
-  .nav-item {
-    gap: 12px;
-    padding: 12px 16px;
-    border-radius: 12px;
-    font-size: 14px;
-  }
 }
 
 .nav-item:hover {
@@ -504,24 +476,18 @@ body {
 
 .hero-subtitle {
   font-size: 14px;
-  font-size: 14px;
   color: rgb(var(--fg-secondary));
-  margin-bottom: 24px;
   margin-bottom: 24px;
   line-height: 1.6;
 }
 
 @media (min-width: 640px) {
-@media (min-width: 640px) {
   .hero-subtitle {
-    font-size: 18px;
-    margin-bottom: 32px;
     font-size: 18px;
     margin-bottom: 32px;
   }
 }
 
-/* Widget grid - Mobile first */
 /* Widget grid - Mobile first */
 .widget-grid {
   display: grid;
@@ -623,19 +589,8 @@ body {
 }
 
 /* Stats cards - Mobile first */
-/* Stats cards - Mobile first */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin: 20px 0;
-}
-
-@media (min-width: 640px) {
-  .stats-grid {
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
-    margin: 24px 0;
   grid-template-columns: repeat(2, 1fr);
   gap: 12px;
   margin: 20px 0;
@@ -767,30 +722,6 @@ th, td {
   }
 }
 
-/* Table styles - Mobile first */
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-@media (min-width: 640px) {
-  table {
-    font-size: 14px;
-  }
-}
-
-th, td {
-  padding: 8px 6px;
-  text-align: left;
-  border-bottom: 1px solid rgb(var(--border-primary));
-}
-
-@media (min-width: 640px) {
-  th, td {
-    padding: 12px 8px;
-  }
-}
 
 /* Responsive utilities */
 .mobile-only {

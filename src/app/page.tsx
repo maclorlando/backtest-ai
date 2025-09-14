@@ -6,11 +6,8 @@ import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestRe
 import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
 import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
 import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
-import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
-import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import PortfolioChart from "@/components/charts/PortfolioChart";
 import ComparisonChart from "@/components/charts/ComparisonChart";
-import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import DateRangeWidget from "@/components/widgets/DateRangeWidget";
 import RebalancingWidget from "@/components/widgets/RebalancingWidget";
@@ -335,12 +332,6 @@ export default function Home() {
   const handleLoadPortfolioAllocations = (allocations: AllocationRow[]) => {
     setAllocations([...allocations]);
     showSuccessNotification("Portfolio Loaded", `Loaded portfolio allocations`);
-    showSuccessNotification("Portfolio Loaded", `Loaded portfolio configuration`);
-  };
-
-  const handleLoadPortfolioAllocations = (allocations: AllocationRow[]) => {
-    setAllocations([...allocations]);
-    showSuccessNotification("Portfolio Loaded", `Loaded portfolio allocations`);
   };
 
   return (
@@ -377,13 +368,9 @@ export default function Home() {
       {/* Main Widgets */}
       <section className="widget-grid">
         <PortfolioBuilder
-        <PortfolioBuilder
           allocations={allocations}
           setAllocations={setAllocations}
           spot={spot}
-          logos={logos}
-          initialCapital={initialCapital}
-          setInitialCapital={setInitialCapital}
           logos={logos}
           initialCapital={initialCapital}
           setInitialCapital={setInitialCapital}
@@ -400,15 +387,6 @@ export default function Home() {
           mounted={mounted}
           logos={logos}
           onLoadPortfolio={handleLoadPortfolioAllocations}
-        />
-
-        <SavedPortfoliosWidget
-          saved={saved}
-          setSaved={setSaved}
-          onLoadPortfolio={handleLoadPortfolio}
-          onCompareAll={compareAll}
-          mounted={mounted}
-          logos={logos}
         />
 
         <DateRangeWidget
