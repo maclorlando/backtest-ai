@@ -1,7 +1,7 @@
 "use client";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { IconChartLine, IconWallet, IconBuildingBank, IconSettings, IconMenu, IconX, IconSun, IconMoon } from "@tabler/icons-react";
 import WalletWidget from "./WalletWidget";
 
@@ -11,12 +11,6 @@ const navItems = [
     label: "Backtest",
     icon: IconChartLine,
     description: "Portfolio backtesting & analysis"
-  },
-  {
-    href: "/wallet",
-    label: "Wallet",
-    icon: IconWallet,
-    description: "Wallet management & balances"
   },
   {
     href: "/aave",
@@ -36,8 +30,16 @@ export default function Navigation() {
   const pathname = usePathname();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [isClient, setIsClient] = useState(false);
+
+  // Set client flag on mount
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
 
   const toggleTheme = () => {
+    if (!isClient) return;
+    
     const newTheme = theme === "dark" ? "light" : "dark";
     setTheme(newTheme);
     if (newTheme === "light") {
@@ -85,7 +87,7 @@ export default function Navigation() {
               {theme === "dark" ? <IconSun size={18} className="sm:w-5 sm:h-5" /> : <IconMoon size={18} className="sm:w-5 sm:h-5" />}
             </button>
 
-            {/* Wallet widget - hidden on mobile to save space */}
+            {/* Wallet widget */}
             <div className="hidden sm:block">
               <WalletWidget />
             </div>

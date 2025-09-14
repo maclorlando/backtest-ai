@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo, useState, useEffect } from "react";
-import { format, subYears } from "date-fns";
+import { format, subYears, differenceInCalendarDays } from "date-fns";
 import Image from "next/image";
 import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
 import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
@@ -35,9 +35,14 @@ export default function Home() {
       perAssetWeights?: Record<string, number[]>;
     };
     metrics: {
+      startDate: string;
+      endDate: string;
+      tradingDays: number;
+      initialCapital: number;
       finalValue: number;
       cumulativeReturnPct: number;
       cagrPct: number;
+      volatilityPct: number;
       maxDrawdownPct: number;
       sharpe: number | null;
     };
@@ -166,6 +171,7 @@ export default function Home() {
     setSaved(next);
     localStorage.setItem("bt_portfolios", JSON.stringify(next));
     showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
+    showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
   }
 
   const allocationSum = allocations.reduce((s, a) => s + a.allocation, 0);
@@ -202,9 +208,20 @@ export default function Home() {
         }
       }, 100);
       
+      
+      // Auto-scroll to results section
+      setTimeout(() => {
+        const resultsSection = document.querySelector('.chart-container');
+        if (resultsSection) {
+          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+      
       if (Array.isArray(data?.integrity?.issues) && data.integrity.issues.length > 0) {
         showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
+        showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
       } else {
+        showSuccessNotification("Backtest Completed", "Analysis completed successfully");
         showSuccessNotification("Backtest Completed", "Analysis completed successfully");
       }
     } catch (e) {
@@ -271,6 +288,7 @@ export default function Home() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
               showErrorNotification("Comparison Error", msg);
+              showErrorNotification("Comparison Error", msg);
     } finally {
       setComparing(false);
     }
@@ -296,6 +314,7 @@ export default function Home() {
       return row;
     });
   }, [result, initialCapital, allocations]);
+
 
 
 
@@ -433,30 +452,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Comparison Chart */}
-      {comparisonLines.length > 0 && (
-        <section className="chart-container">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Portfolio Comparison</h2>
-              <p className="text-[rgb(var(--fg-secondary))]">
-                Comparing {comparisonLines.length} saved portfolios
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setComparisonLines([]);
-                setComparisonData([]);
-              }}
-              className="btn btn-secondary"
-            >
-              Close Comparison
-            </button>
-          </div>
-          <ComparisonChart data={comparisonData} lines={comparisonLines} />
-        </section>
-      )}
-
       {/* Loading State */}
       {loading && (
         <section className="space-y-6">
@@ -494,6 +489,10 @@ export default function Home() {
               <div className="stat-label">CAGR</div>
             </div>
             <div className="stat-card">
+              <div className="stat-value">${result.metrics.initialCapital.toFixed(2)}</div>
+              <div className="stat-label">Initial Capital</div>
+            </div>
+            <div className="stat-card">
               <div className="stat-value text-red-400">{result.metrics.maxDrawdownPct.toFixed(2)}%</div>
               <div className="stat-label">Max Drawdown</div>
             </div>
@@ -504,6 +503,46 @@ export default function Home() {
             <div className="stat-card">
               <div className="stat-value">{result.risk?.riskReward == null ? "—" : result.risk.riskReward.toFixed(2)}</div>
               <div className="stat-label">Risk/Reward</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{result.metrics.volatilityPct.toFixed(2)}%</div>
+              <div className="stat-label">Volatility</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value text-xs font-normal leading-tight">
+                <div className="flex flex-wrap gap-2 items-center">
+                  {allocations.map((a, index) => (
+                    <div key={a.id} className="flex items-center gap-1">
+                      {logos[a.id] && (
+                        <Image
+                          src={logos[a.id]}
+                          alt={ASSET_ID_TO_SYMBOL[a.id]}
+                          width={16}
+                          height={16}
+                          className="rounded-full"
+                        />
+                      )}
+                      <span className="text-xs">
+                        {ASSET_ID_TO_SYMBOL[a.id]} {(a.allocation * 100).toFixed(1)}%
+                      </span>
+                      {index < allocations.length - 1 && <span className="text-gray-400">•</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="stat-label">Composition</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value text-sm font-normal">
+                {mode === "none" && "None"}
+                {mode === "periodic" && `Every ${periodDays} day${periodDays === 1 ? '' : 's'}`}
+                {mode === "threshold" && `Deviation ±${thresholdPct}%`}
+              </div>
+              <div className="stat-label">Rebalancing</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{(differenceInCalendarDays(new Date(result.metrics.endDate), new Date(result.metrics.startDate)) / 365).toFixed(1)}y</div>
+              <div className="stat-label">{result.metrics.startDate} → {result.metrics.endDate}</div>
             </div>
           </div>
 
@@ -565,6 +604,30 @@ export default function Home() {
               )}
             </div>
           </div>
+        </section>
+      )}
+
+      {/* Comparison Chart - always after results section */}
+      {comparisonLines.length > 0 && (
+        <section className="chart-container">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Portfolio Comparison</h2>
+              <p className="text-[rgb(var(--fg-secondary))]">
+                Comparing {comparisonLines.length} saved portfolios
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setComparisonLines([]);
+                setComparisonData([]);
+              }}
+              className="btn btn-secondary"
+            >
+              Close Comparison
+            </button>
+          </div>
+          <ComparisonChart data={comparisonData} lines={comparisonLines} />
         </section>
       )}
     </div>

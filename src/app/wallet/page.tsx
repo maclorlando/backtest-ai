@@ -1126,7 +1126,7 @@ export default function WalletPage() {
           <p className="text-sm text-[rgb(var(--fg-secondary))]">
             <strong>Current Network:</strong> {CHAINS[chainId]?.name || `Chain ${chainId}`}<br />
             <strong>Note:</strong> Tokens are network-specific. When you switch networks, tokens added on other networks may not be valid. 
-            Use "Add Popular Tokens" to quickly add tokens for the current network, or "Clean Invalid" to remove invalid tokens.
+            Use &quot;Add Popular Tokens&quot; to quickly add tokens for the current network, or &quot;Clean Invalid&quot; to remove invalid tokens.
           </p>
         </div>
         

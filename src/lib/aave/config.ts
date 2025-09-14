@@ -25,7 +25,7 @@ type AddressBookShape = {
   POOL_ADDRESSES_PROVIDER: string;
   AAVE_PROTOCOL_DATA_PROVIDER: string;
   ORACLE: string;
-  ASSETS: Record<string, { UNDERLYING: string }>;
+  ASSETS: Record<string, { UNDERLYING: string; A_TOKEN: string }>;
 };
 
 export type AaveNetworkConfig = {
@@ -33,13 +33,17 @@ export type AaveNetworkConfig = {
   poolAddressesProvider: Address;
   aaveProtocolDataProvider: Address;
   priceOracle: Address;
-  reserves: Record<string, { underlying: Address; symbol: string }>;
+  reserves: Record<string, { underlying: Address; aToken: Address; symbol: string }>;
 };
 
 function normalizeCfg(book: unknown): AaveNetworkConfig {
   const cfg = book as AddressBookShape;
   const reserves = Object.fromEntries(
-    Object.entries(cfg.ASSETS || {}).map(([sym, v]) => [sym, { underlying: v.UNDERLYING as Address, symbol: sym }])
+    Object.entries(cfg.ASSETS || {}).map(([sym, v]) => [sym, { 
+      underlying: v.UNDERLYING as Address, 
+      aToken: v.A_TOKEN as Address,
+      symbol: sym 
+    }])
   );
   return {
     pool: cfg.POOL as Address,
@@ -73,7 +77,8 @@ export function getAaveConfig(chainId: number): AaveNetworkConfig | null {
     return normalizeCfg(AaveV3Avalanche as unknown as AddressBookShape);
   }
   if (chainId === 8453) {
-    return normalizeCfg(AaveV3Base as unknown as AddressBookShape);
+    // Custom Base configuration with only the 5 supported assets
+    return getCustomBaseConfig();
   }
   // if (chainId === 56) {
   //   return normalizeCfg(AaveV3Bsc as unknown as AddressBookShape);
@@ -112,16 +117,63 @@ export function getAaveConfig(chainId: number): AaveNetworkConfig | null {
   return null;
 }
 
+// Custom Base configuration with only the 5 supported assets
+function getCustomBaseConfig(): AaveNetworkConfig {
+  // Get the base config from the address book for pool addresses
+  const baseConfig = normalizeCfg(AaveV3Base as unknown as AddressBookShape);
+  
+  // Override with only our 5 supported assets
+  const customReserves = {
+    USDC: {
+      underlying: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address,
+      aToken: "0x4D65f8C0A816e21FEC8e0eB77e8c5b5c4b4521B3" as Address, // aBasUSDC
+      symbol: "USDC"
+    },
+    cbBTC: {
+      underlying: "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf" as Address,
+      aToken: "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22" as Address, // aBascbBTC
+      symbol: "cbBTC"
+    },
+    WETH: {
+      underlying: "0x4200000000000000000000000000000000000006" as Address,
+      aToken: "0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7" as Address, // aBasWETH
+      symbol: "WETH"
+    },
+    wstETH: {
+      underlying: "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452" as Address,
+      aToken: "0x99CBC45ea5bb7eF3a5BC08FB1B7E56bB2442Ef0D" as Address, // aBaswstETH
+      symbol: "wstETH"
+    },
+    EURC: {
+      underlying: "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42" as Address,
+      aToken: "0x90DA57E0A6C0d166Bf15764E03b83745Dc90025B" as Address, // aBasEURC
+      symbol: "EURC"
+    },
+    AAVE: {
+      underlying: "0x63706e401c06ac8513145b7687A14804d17f814b" as Address,
+      aToken: "0x67EAF2BeE4384a2f84Da9Eb8105C661C123736BA" as Address, // aBasAAVE
+      symbol: "AAVE"
+    }
+  };
+
+  return {
+    ...baseConfig,
+    reserves: customReserves
+  };
+}
+
 export function mapAssetIdToAaveSymbol(assetId: string): string | null {
   switch (assetId) {
     case "usd-coin":
       return "USDC";
     case "bitcoin":
-      return "WBTC";
+      return "cbBTC"; // Bitcoin maps to Coinbase Bitcoin (cbBTC) on Base
     case "ethereum":
       return "WETH";
-    case "chainlink":
-      return "LINK";
+    case "wrapped-staked-ether":
+      return "wstETH"; // Wrapped Staked Ethereum
+    case "euro-coin":
+      return "EURC"; // Euro Coin
     case "aave":
       return "AAVE";
     default:
