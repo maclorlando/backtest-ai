@@ -16,7 +16,7 @@ export default function LandingPage() {
     {
       icon: IconBuildingBank,
       title: "Aave Integration",
-      description: "DeFi lending and borrowing on Base with one-click portfolio deployment",
+      description: "DeFi lending and borrowing with one-click portfolio deployment",
       href: "/aave",
       color: "bg-green-500"
     },
@@ -30,7 +30,7 @@ export default function LandingPage() {
     {
       icon: IconRoad,
       title: "Project Roadmap",
-      description: "Explore our vision from Aave Base markets to DeFi-powered neobank",
+      description: "Explore our vision from Aave markets to DeFi-powered neobank",
       href: "/roadmap",
       color: "bg-orange-500"
     }
@@ -40,7 +40,7 @@ export default function LandingPage() {
     {
       phase: "Phase 1",
       title: "MVP Launch",
-      description: "Aave Base markets with backtesting and portfolio deployment",
+      description: "Aave markets with backtesting and portfolio deployment",
       status: "current"
     },
     {
@@ -70,7 +70,7 @@ export default function LandingPage() {
   ];
 
   const stats = [
-    { label: "Supported Chains", value: "Base", icon: IconShield },
+    { label: "Supported Chains", value: "Multi-Chain", icon: IconShield },
     { label: "DeFi Protocols", value: "Aave", icon: IconBuildingBank },
     { label: "Features", value: "4+", icon: IconTrendingUp },
     { label: "Roadmap Phases", value: "5", icon: IconRocket }
@@ -89,11 +89,11 @@ export default function LandingPage() {
               </span>
             </h1>
             <p className="hero-subtitle text-xl md:text-2xl mb-8 max-w-3xl mx-auto">
-              From Aave Base Markets to Multi-Chain Portfolio Management — and Beyond
+              From Aave Markets to Multi-Chain Portfolio Management — and Beyond
             </p>
             <p className="text-lg text-[rgb(var(--fg-secondary))] mb-12 max-w-2xl mx-auto">
               A non-custodial platform for testing and managing DeFi portfolios. 
-              Start with Aave Base markets and grow into a comprehensive DeFi ecosystem.
+              Start with Aave markets and grow into a comprehensive DeFi ecosystem.
             </p>
             
             {/* CTA Buttons */}
@@ -242,7 +242,7 @@ export default function LandingPage() {
                 <div className="space-y-4">
                   <div className="flex items-start gap-3">
                     <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
-                    <p className="text-[rgb(var(--fg-secondary))]">One-click Aave Base market portfolio deployment</p>
+                    <p className="text-[rgb(var(--fg-secondary))]">One-click Aave market portfolio deployment</p>
                   </div>
                   <div className="flex items-start gap-3">
                     <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
@@ -279,7 +279,7 @@ export default function LandingPage() {
                 <IconUsers size={24} className="text-white" />
               </div>
               <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Retail Investors</h3>
-              <p className="text-sm text-[rgb(var(--fg-secondary))]">Start with Aave Base market strategies</p>
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">Start with Aave market strategies</p>
             </div>
             
             <div className="card text-center">

@@ -17,15 +17,11 @@ export function LiFiWidgetModal({ opened, onClose }: LiFiWidgetModalProps) {
   const widgetConfig: WidgetConfig = {
     integrator: 'Backtest-AI',
     // Ensure the widget operates independently from parent app
-    variant: 'default',
+    variant: undefined,
     // Disable wallet connection inheritance
     walletConfig: {
-      connect: {
-        showQrModal: true,
-        themeMode: 'dark',
-        themeVariables: {
-          '--w3m-z-index': '10001'
-        }
+      onConnect: () => {
+        // Allow independent wallet connections
       }
     },
     theme: {
@@ -76,12 +72,6 @@ export function LiFiWidgetModal({ opened, onClose }: LiFiWidgetModalProps) {
     },
     // UI customization
     appearance: 'dark',
-    // Disable wallet connection inheritance from parent app
-    disableTelemetry: true,
-    // Additional configuration to prevent wallet inheritance
-    hiddenUI: ['appearance'],
-    toChain: undefined,
-    fromChain: undefined,
   };
 
   useEffect(() => {

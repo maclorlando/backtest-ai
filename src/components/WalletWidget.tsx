@@ -1,14 +1,12 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
-import { useAccount, useDisconnect, useBalance, useSwitchChain } from "wagmi";
-import { IconWallet, IconLogout, IconCopy, IconExternalLink, IconBrandCoinbase, IconCheck } from "@tabler/icons-react";
+import { useAccount, useDisconnect, useBalance } from "wagmi";
+import { IconWallet, IconLogout, IconCopy, IconExternalLink, IconCheck } from "@tabler/icons-react";
 import { showSuccessNotification, showErrorNotification } from "@/lib/utils/errorHandling";
-import { base } from "viem/chains";
 
 export default function WalletWidget() {
   const { address, isConnected, chainId } = useAccount();
   const { disconnect } = useDisconnect();
-  const { switchChain } = useSwitchChain();
   const { data: balance } = useBalance({
     address: address,
   });
@@ -40,10 +38,6 @@ export default function WalletWidget() {
     };
   }, [showMenu]);
 
-  const isOnBaseMainnet = (chainId: number | undefined) => {
-    return chainId === base.id;
-  };
-
   const copyAddress = async () => {
     if (!address) return;
     try {
@@ -62,15 +56,6 @@ export default function WalletWidget() {
     window.open(url, "_blank");
   };
 
-  const switchToBase = async () => {
-    try {
-      await switchChain({ chainId: base.id });
-      showSuccessNotification("Switched to Base Mainnet", "Network Changed");
-    } catch (error) {
-      showErrorNotification("Failed to switch network", "Network Error");
-    }
-  };
-
   const disconnectWallet = async () => {
     try {
       disconnect();
@@ -83,10 +68,6 @@ export default function WalletWidget() {
   if (!isClient) {
     return (
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 rounded-full text-sm font-medium">
-          <IconBrandCoinbase size={16} />
-          Base Mainnet
-        </div>
         <button className="btn btn-primary" disabled>
           <IconWallet size={16} />
           Connect Wallet
@@ -98,11 +79,6 @@ export default function WalletWidget() {
   if (!isConnected) {
     return (
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 rounded-full text-sm font-medium">
-          <IconBrandCoinbase size={16} />
-          Base Mainnet
-        </div>
-        
         <div className="wallet-connect-wrapper">
           <appkit-button />
         </div>
@@ -112,33 +88,7 @@ export default function WalletWidget() {
 
   return (
     <>
-      {/* Network Switch Prompt */}
-      {!isOnBaseMainnet(chainId) && (
-        <div className="fixed top-4 right-4 z-50 bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-300 dark:border-yellow-700 rounded-lg p-4 max-w-sm">
-          <div className="flex items-start gap-3">
-            <div className="flex-1">
-              <h3 className="font-semibold text-yellow-800 dark:text-yellow-200 mb-1">
-                Switch to Base Mainnet
-              </h3>
-              <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-3">
-                This dApp only works on Base Mainnet. Please switch your wallet to Base to continue.
-              </p>
-              <button
-                onClick={switchToBase}
-                className="btn btn-primary btn-sm"
-              >
-                Switch to Base
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 rounded-full text-sm font-medium">
-          <IconBrandCoinbase size={16} />
-          Base Mainnet
-        </div>
         
         <div className="relative" ref={menuRef}>
           <button
@@ -169,9 +119,6 @@ export default function WalletWidget() {
                       {parseFloat(balance.formatted).toFixed(4)} {balance.symbol}
                     </div>
                   )}
-                  <div className="text-xs text-[rgb(var(--fg-tertiary))] mt-1">
-                    Chain: {chainId} | On Base: {isOnBaseMainnet(chainId) ? 'Yes' : 'No'}
-                  </div>
                 </div>
                 
                 <div className="space-y-2">
