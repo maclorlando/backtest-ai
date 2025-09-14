@@ -67,7 +67,7 @@ export default function WalletWidget() {
       await switchChain({ chainId: base.id });
       showSuccessNotification("Switched to Base Mainnet", "Network Changed");
     } catch (error) {
-      showErrorNotification(error, "Failed to switch network");
+      showErrorNotification("Failed to switch network", "Network Error");
     }
   };
 
@@ -76,7 +76,7 @@ export default function WalletWidget() {
       disconnect();
       showSuccessNotification("Wallet disconnected", "Disconnected");
     } catch (error) {
-      showErrorNotification(error, "Failed to disconnect");
+      showErrorNotification("Failed to disconnect", "Disconnect Error");
     }
   };
 
@@ -155,6 +155,7 @@ export default function WalletWidget() {
               </span>
             )}
           </button>
+
 
           {showMenu && (
             <div className="absolute right-0 top-full mt-2 w-64 bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-primary))] rounded-lg shadow-lg z-50">
