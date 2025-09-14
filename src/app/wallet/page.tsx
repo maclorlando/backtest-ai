@@ -23,6 +23,7 @@ import { readErc20Balance, readErc20Metadata } from "@/lib/evm/erc20";
 import { fetchCurrentPricesUSD, fetchCoinData, fetchMarketData, fetchTrendingCoins, searchCoins, fetchGlobalData, type CoinGeckoMarketData, type CoinGeckoGlobalData } from "@/lib/prices";
 import { type AssetId } from "@/lib/types";
 import { showErrorNotification, showSuccessNotification, showInfoNotification, retryOperation, showWarningNotification } from "@/lib/utils/errorHandling";
+import { getCoinGeckoApiKey } from "@/lib/utils/apiKey";
 import { useApp } from "@/lib/context/AppContext";
 
 export default function WalletPage() {
@@ -255,7 +256,8 @@ export default function WalletPage() {
             });
           
           if (tokenSymbols.length > 0) {
-            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[]);
+            const apiKey = getCoinGeckoApiKey();
+            const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[], apiKey);
             
             // Map the prices back to the original symbols
             const mappedPrices: Record<string, number> = {};
@@ -342,7 +344,8 @@ export default function WalletPage() {
         });
       
       if (tokenSymbols.length > 0) {
-        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[]);
+        const apiKey = getCoinGeckoApiKey();
+        const tokenPrices = await fetchCurrentPricesUSD(tokenSymbols as AssetId[], apiKey);
         
         // Map the prices back to the original symbols
         const mappedPrices: Record<string, number> = {};
@@ -443,7 +446,8 @@ export default function WalletPage() {
         .filter(Boolean);
 
       if (coinIds.length > 0) {
-        const marketData = await fetchMarketData(coinIds);
+        const apiKey = getCoinGeckoApiKey();
+        const marketData = await fetchMarketData(coinIds, apiKey);
         setMarketData(marketData);
       }
     } catch (error) {

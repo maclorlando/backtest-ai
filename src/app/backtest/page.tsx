@@ -6,8 +6,10 @@ import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestRe
 import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
 import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
 import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
+import { getCoinGeckoApiKey } from "@/lib/utils/apiKey";
 import PortfolioChart from "@/components/charts/PortfolioChart";
 import ComparisonChart from "@/components/charts/ComparisonChart";
+import LoadingOverlay from "@/components/LoadingOverlay";
 import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import DateRangeWidget from "@/components/widgets/DateRangeWidget";
 import RebalancingWidget from "@/components/widgets/RebalancingWidget";
@@ -80,7 +82,7 @@ export default function BacktestPage() {
   // Load logos on mount and when assets change
   useEffect(() => {
     const ids = Array.from(new Set(allocations.map((a) => a.id)));
-    const key = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+    const key = getCoinGeckoApiKey();
     fetchCoinLogos(ids, key).then(setLogos).catch(() => {});
   }, [allocations]);
 
@@ -110,7 +112,7 @@ export default function BacktestPage() {
       "chainlink",
       "fartcoin",
     ];
-    const key = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+    const key = getCoinGeckoApiKey();
     fetchCoinLogos(allIds, key).then((res) => setLogos((prev) => ({ ...res, ...prev }))).catch(() => {});
     fetchCurrentPricesUSD(allIds, key).then(setSpot).catch(() => {});
   }, []);
@@ -128,7 +130,7 @@ export default function BacktestPage() {
     // If we already have a result, reuse it; otherwise call API
     let res = result;
     if (!res) {
-      const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+      const cgKey = getCoinGeckoApiKey();
       const r = await fetch("/api/backtest", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
@@ -180,7 +182,7 @@ export default function BacktestPage() {
     setError(null);
     setLoading(true);
     try {
-      const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+      const cgKey = getCoinGeckoApiKey();
       const res = await fetch("/api/backtest", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
@@ -237,6 +239,13 @@ export default function BacktestPage() {
       setComparing(true);
       const entries = Object.entries(saved);
       if (entries.length === 0) return;
+      
+      // Show success notification for starting comparison
+      showSuccessNotification(
+        `Starting comparison of ${entries.length} portfolios...`,
+        "Portfolio Comparison"
+      );
+      
       // Normalize to a common timeline using API responses
       const responses: { name: string; res: BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } }[] = [];
       for (const [name, cfg] of entries) {
@@ -247,7 +256,7 @@ export default function BacktestPage() {
           rebalance: { mode: cfg.mode, periodDays: cfg.periodDays, thresholdPct: cfg.thresholdPct },
           initialCapital: cfg.initialCapital,
         };
-        const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
+        const cgKey = getCoinGeckoApiKey();
         const r = await fetch("/api/backtest", { method: "POST", headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) }, body: JSON.stringify(body) });
         const data = (await r.json()) as (BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } }) | { error?: string };
         if (!r.ok) throw new Error((data as { error?: string })?.error || "Request failed");
@@ -285,10 +294,15 @@ export default function BacktestPage() {
       });
       setComparisonLines(lines);
       setComparisonData(rows);
+      
+      // Show success notification when comparison completes
+      showSuccessNotification(
+        `Successfully compared ${lines.length} portfolios`,
+        "Comparison Complete"
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unknown error";
-              showErrorNotification("Comparison Error", msg);
-              showErrorNotification("Comparison Error", msg);
+      showErrorNotification("Comparison Error", msg);
     } finally {
       setComparing(false);
     }
@@ -386,6 +400,7 @@ export default function BacktestPage() {
           onCompareAll={compareAll}
           mounted={mounted}
           logos={logos}
+          comparing={comparing}
         />
 
         <DateRangeWidget
@@ -630,6 +645,13 @@ export default function BacktestPage() {
           <ComparisonChart data={comparisonData} lines={comparisonLines} />
         </section>
       )}
+
+      {/* Loading Overlay for Comparison */}
+      <LoadingOverlay 
+        visible={comparing} 
+        message="Comparing portfolios..." 
+        zIndex={2000}
+      />
     </div>
   );
 }

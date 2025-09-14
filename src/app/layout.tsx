@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import ContextProvider from '../../context';
 import ThemeWrapper from '@/components/ThemeWrapper';
 import Navigation from '@/components/Navigation';
+import { GlobalModalProvider } from '@/components/GlobalModalProvider';
 import { MantineProvider, createTheme } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
 
@@ -95,14 +96,16 @@ export default async function RootLayout({
 							limit={3}
 							autoClose={5000}
 						/>
-						<ThemeWrapper>
-							<div className="min-h-screen bg-[rgb(var(--bg-primary))]">
-								<Navigation />
-								<main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6 max-w-7xl">
-									{children}
-								</main>
-							</div>
-						</ThemeWrapper>
+						<GlobalModalProvider>
+							<ThemeWrapper>
+								<div className="min-h-screen bg-[rgb(var(--bg-primary))]">
+									<Navigation />
+									<main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6 max-w-7xl">
+										{children}
+									</main>
+								</div>
+							</ThemeWrapper>
+						</GlobalModalProvider>
 					</MantineProvider>
 				</ContextProvider>
 			</body>

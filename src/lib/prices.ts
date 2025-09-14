@@ -170,7 +170,7 @@ async function fetchCoingeckoDailyPrices(
   to: Date,
   apiKey?: string
 ): Promise<PricePoint[]> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const url = `${base}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
 
@@ -379,7 +379,7 @@ export async function fetchPrices(
 }
 
 export async function fetchCoinLogos(ids: AssetId[], apiKey?: string): Promise<Record<string, string>> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -399,7 +399,7 @@ export async function fetchCoinLogos(ids: AssetId[], apiKey?: string): Promise<R
 }
 
 export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Promise<Record<string, number>> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -526,7 +526,7 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
  * Fetch comprehensive coin data including images, market data, and social links
  */
 export async function fetchCoinData(coinId: string, apiKey?: string): Promise<CoinGeckoCoin | null> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -564,7 +564,7 @@ export async function fetchMarketData(
     price_change_percentage?: string;
   }
 ): Promise<CoinGeckoMarketData[]> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -602,7 +602,7 @@ export async function fetchMarketData(
  * Fetch global cryptocurrency market statistics
  */
 export async function fetchGlobalData(apiKey?: string): Promise<CoinGeckoGlobalData | null> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -630,7 +630,7 @@ export async function fetchGlobalData(apiKey?: string): Promise<CoinGeckoGlobalD
  * Fetch trending coins in the last 24 hours
  */
 export async function fetchTrendingCoins(apiKey?: string): Promise<CoinGeckoTrending | null> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -661,7 +661,7 @@ export async function searchCoins(
   query: string, 
   apiKey?: string
 ): Promise<Array<{ id: string; name: string; symbol: string; market_cap_rank: number; thumb: string; large: string }>> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -693,7 +693,7 @@ export async function fetchOHLCData(
   days: number = 7,
   apiKey?: string
 ): Promise<Array<[number, number, number, number, number]>> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
@@ -721,7 +721,7 @@ export async function fetchOHLCData(
  * Get all supported coins list for autocomplete and discovery
  */
 export async function fetchAllCoins(apiKey?: string): Promise<Array<{ id: string; symbol: string; name: string }>> {
-  const key = apiKey || process.env.NEXT_PUBLIC_COINGECKO_API_KEY;
+  const key = apiKey;
   const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
   const headers: Record<string, string> = { accept: "application/json" };
   if (key) headers["x-cg-pro-api-key"] = key;
