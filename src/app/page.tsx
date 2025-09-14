@@ -1,635 +1,335 @@
 "use client";
-import React, { useMemo, useState, useEffect } from "react";
-import { format, subYears, differenceInCalendarDays } from "date-fns";
-import Image from "next/image";
-import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
-import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
-import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
-import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
-import PortfolioChart from "@/components/charts/PortfolioChart";
-import ComparisonChart from "@/components/charts/ComparisonChart";
-import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
-import DateRangeWidget from "@/components/widgets/DateRangeWidget";
-import RebalancingWidget from "@/components/widgets/RebalancingWidget";
-import SavedPortfoliosWidget from "@/components/widgets/SavedPortfoliosWidget";
+import React from "react";
+import Link from "next/link";
+import { IconChartLine, IconBuildingBank, IconRoad, IconSettings, IconWallet, IconTrendingUp, IconShield, IconUsers, IconCreditCard, IconRocket } from "@tabler/icons-react";
+import WalletWidget from "@/components/WalletWidget";
 
-type AllocationRow = { id: AssetId; allocation: number };
-
-export default function Home() {
-  const [allocations, setAllocations] = useState<AllocationRow[]>([
-    { id: "usd-coin", allocation: 0.8 },
-    { id: "bitcoin", allocation: 0.2 },
-  ]);
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [mode, setMode] = useState<"none" | "periodic" | "threshold">("none");
-  const [periodDays, setPeriodDays] = useState(30);
-  const [thresholdPct, setThresholdPct] = useState(5);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
-  type BacktestUIResult = {
-    series: {
-      portfolio: { date: string; value: number }[];
-      perAssetPrices?: Record<string, number[]>;
-      perAssetWeights?: Record<string, number[]>;
-    };
-    metrics: {
-      startDate: string;
-      endDate: string;
-      tradingDays: number;
-      initialCapital: number;
-      finalValue: number;
-      cumulativeReturnPct: number;
-      cagrPct: number;
-      volatilityPct: number;
-      maxDrawdownPct: number;
-      sharpe: number | null;
-    };
-    risk?: { perAssetVolatilityPct: Record<string, number>; riskReward: number | null };
-    integrity?: { score: number; issues: string[] };
-  };
-  
-  const [result, setResult] = useState<BacktestUIResult | null>(null);
-  const [initialCapital, setInitialCapital] = useState<number>(100);
-  
-  type SavedRecord = {
-    allocations: AllocationRow[];
-    start: string; end: string; mode: typeof mode;
-    periodDays?: number; thresholdPct?: number; initialCapital: number;
-    kpis?: {
-      finalValue: number;
-      retPct: number;
-      cagrPct: number;
-      volPct: number;
-      maxDdPct: number;
-      rr: number | null;
-    };
-  };
-  
-  const [saved, setSaved] = useState<Record<string, SavedRecord>>({});
-  const [mounted, setMounted] = useState(false);
-  const [logos, setLogos] = useState<Record<string, string>>({});
-  const [spot, setSpot] = useState<Record<string, number>>({});
-  const [comparing, setComparing] = useState(false);
-  const [comparisonData, setComparisonData] = useState<Array<Record<string, number | string>>>([]);
-  const [comparisonLines, setComparisonLines] = useState<
-    { key: string; name: string; color: string; kpis: { cagrPct: number; volPct: number; maxDdPct: number; rr: number | null } }[]
-  >([]);
-
-  // Load logos on mount and when assets change
-  useEffect(() => {
-    const ids = Array.from(new Set(allocations.map((a) => a.id)));
-    const key = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
-    fetchCoinLogos(ids, key).then(setLogos).catch(() => {});
-  }, [allocations]);
-
-  // Hydration-safe load of saved portfolios from localStorage
-  useEffect(() => {
-    setMounted(true);
-    try {
-      const raw = typeof window !== "undefined" ? localStorage.getItem("bt_portfolios") : null;
-      const parsed = raw ? (JSON.parse(raw) as Record<string, SavedRecord>) : {};
-      setSaved(parsed);
-    } catch {
-      // ignore
+export default function LandingPage() {
+  const features = [
+    {
+      icon: IconChartLine,
+      title: "Portfolio Backtesting",
+      description: "Test your crypto investment strategies with historical data and advanced analytics",
+      href: "/backtest",
+      color: "bg-blue-500"
+    },
+    {
+      icon: IconBuildingBank,
+      title: "Aave Integration",
+      description: "DeFi lending and borrowing on Base with one-click portfolio deployment",
+      href: "/aave",
+      color: "bg-green-500"
+    },
+    {
+      icon: IconWallet,
+      title: "Wallet Management",
+      description: "Advanced wallet management with ERC-20 token tracking and balances",
+      href: "/wallet",
+      color: "bg-purple-500"
+    },
+    {
+      icon: IconRoad,
+      title: "Project Roadmap",
+      description: "Explore our vision from Aave Base markets to DeFi-powered neobank",
+      href: "/roadmap",
+      color: "bg-orange-500"
     }
-  }, []);
+  ];
 
-  // Also fetch logos for the full supported asset list once so options render with icons
-  useEffect(() => {
-    const allIds: AssetId[] = [
-      "usd-coin",
-      "bitcoin",
-      "ethereum",
-      "solana",
-      "tether",
-      "pepe",
-      "polkadot",
-      "aave",
-      "chainlink",
-      "fartcoin",
-    ];
-    const key = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
-    fetchCoinLogos(allIds, key).then((res) => setLogos((prev) => ({ ...res, ...prev }))).catch(() => {});
-    fetchCurrentPricesUSD(allIds, key).then(setSpot).catch(() => {});
-  }, []);
-
-  // Initialize dates on client to avoid SSR hydration mismatch due to timezones
-  useEffect(() => {
-    if (!start || !end) {
-      const now = new Date();
-      setEnd(format(now, "yyyy-MM-dd"));
-      setStart(format(subYears(now, 5), "yyyy-MM-dd"));
+  const roadmapHighlights = [
+    {
+      phase: "Phase 1",
+      title: "MVP Launch",
+      description: "Aave Base markets with backtesting and portfolio deployment",
+      status: "current"
+    },
+    {
+      phase: "Phase 2",
+      title: "Smart Contracts",
+      description: "Batch transactions and automated rebalancing",
+      status: "upcoming"
+    },
+    {
+      phase: "Phase 3",
+      title: "Institutional Vaults",
+      description: "ERC-4626 compliant Meta Vaults for funds and DAOs",
+      status: "upcoming"
+    },
+    {
+      phase: "Phase 4",
+      title: "Multi-Chain",
+      description: "Kamino, Cetus, Hyperliquid integrations",
+      status: "upcoming"
+    },
+    {
+      phase: "Phase 5",
+      title: "DeFi Neobank",
+      description: "Credit cards linked to DeFi yield for real-world spending",
+      status: "vision"
     }
-  }, []);
+  ];
 
-  async function saveCurrentPortfolio() {
-    // If we already have a result, reuse it; otherwise call API
-    let res = result;
-    if (!res) {
-      const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
-      const r = await fetch("/api/backtest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
-        body: JSON.stringify({
-          assets: allocations,
-          startDate: start,
-          endDate: end,
-          rebalance: {
-            mode,
-            periodDays: mode === "periodic" ? periodDays : undefined,
-            thresholdPct: mode === "threshold" ? thresholdPct : undefined,
-          },
-          initialCapital,
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data?.error || "Request failed");
-      res = data;
-    }
-    type MetricsShape = { finalValue: number; cumulativeReturnPct: number; cagrPct: number; volatilityPct?: number; maxDrawdownPct: number };
-    type RiskShape = { risk?: { riskReward?: number | null } };
-    const m = (res as unknown as { metrics: MetricsShape } & RiskShape).metrics;
-    const rr = (res as unknown as RiskShape).risk?.riskReward ?? null;
-    const kpis: NonNullable<SavedRecord["kpis"]> = {
-      finalValue: m.finalValue,
-      retPct: m.cumulativeReturnPct,
-      cagrPct: m.cagrPct,
-      volPct: m.volatilityPct ?? 0,
-      maxDdPct: m.maxDrawdownPct,
-      rr,
-    };
-    const name = prompt("Save portfolio as:")?.trim();
-    if (!name) return;
-    const record: SavedRecord = {
-      allocations: [...allocations],
-      start, end, mode, periodDays, thresholdPct, initialCapital,
-      kpis,
-    };
-    const next = { ...saved, [name]: record };
-    setSaved(next);
-    localStorage.setItem("bt_portfolios", JSON.stringify(next));
-    showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
-    showSuccessNotification("Portfolio Saved", `Saved portfolio '${name}'`);
-  }
-
-  const allocationSum = allocations.reduce((s, a) => s + a.allocation, 0);
-
-  async function run() {
-    setError(null);
-    setLoading(true);
-    try {
-      const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
-      const res = await fetch("/api/backtest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
-        body: JSON.stringify({
-          assets: allocations,
-          startDate: start,
-          endDate: end,
-          rebalance: {
-            mode,
-            periodDays: mode === "periodic" ? periodDays : undefined,
-            thresholdPct: mode === "threshold" ? thresholdPct : undefined,
-          },
-          initialCapital,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Request failed");
-      setResult(data);
-      
-      // Auto-scroll to results section
-      setTimeout(() => {
-        const resultsSection = document.querySelector('.chart-container');
-        if (resultsSection) {
-          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 100);
-      
-      
-      // Auto-scroll to results section
-      setTimeout(() => {
-        const resultsSection = document.querySelector('.chart-container');
-        if (resultsSection) {
-          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 100);
-      
-      if (Array.isArray(data?.integrity?.issues) && data.integrity.issues.length > 0) {
-        showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
-        showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
-      } else {
-        showSuccessNotification("Backtest Completed", "Analysis completed successfully");
-        showSuccessNotification("Backtest Completed", "Analysis completed successfully");
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function compareAll() {
-    try {
-      setComparing(true);
-      const entries = Object.entries(saved);
-      if (entries.length === 0) return;
-      // Normalize to a common timeline using API responses
-      const responses: { name: string; res: BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } }[] = [];
-      for (const [name, cfg] of entries) {
-        const body: BacktestRequest = {
-          assets: cfg.allocations,
-          startDate: cfg.start,
-          endDate: cfg.end,
-          rebalance: { mode: cfg.mode, periodDays: cfg.periodDays, thresholdPct: cfg.thresholdPct },
-          initialCapital: cfg.initialCapital,
-        };
-        const cgKey = typeof window !== "undefined" ? localStorage.getItem("bt_cg_key") || undefined : undefined;
-        const r = await fetch("/api/backtest", { method: "POST", headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) }, body: JSON.stringify(body) });
-        const data = (await r.json()) as (BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } }) | { error?: string };
-        if (!r.ok) throw new Error((data as { error?: string })?.error || "Request failed");
-        responses.push({ name, res: data as BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } });
-      }
-      const allDates = Array.from(new Set(responses.flatMap((x) => x.res.series.portfolio.map((p) => p.date)))).sort();
-      const colorPool = ["#1e90ff", "#22c55e", "#ef4444", "#a855f7", "#f59e0b", "#06b6d4", "#e11d48", "#84cc16"]; // rotate if needed
-      const lines: { key: string; name: string; color: string; kpis: { cagrPct: number; volPct: number; maxDdPct: number; rr: number | null } }[] = [];
-      const seriesByName: Record<string, Record<string, number>> = {};
-      responses.forEach((r, idx) => {
-        const key = `p_${idx}`;
-        const color = colorPool[idx % colorPool.length];
-        lines.push({
-          key,
-          name: r.name,
-          color,
-          kpis: {
-            cagrPct: r.res.metrics.cagrPct,
-            volPct: r.res.metrics.volatilityPct,
-            maxDdPct: r.res.metrics.maxDrawdownPct,
-            rr: r.res.risk?.riskReward ?? null,
-          },
-        });
-        const map: Record<string, number> = {};
-        r.res.series.portfolio.forEach((p) => (map[p.date] = p.value));
-        seriesByName[key] = map;
-      });
-      const rows = allDates.map((d) => {
-        const row: Record<string, number | string> = { date: d };
-        for (const ln of lines) {
-          const v = seriesByName[ln.key][d];
-          row[ln.key] = typeof v === "number" ? v : NaN;
-        }
-        return row;
-      });
-      setComparisonLines(lines);
-      setComparisonData(rows);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Unknown error";
-              showErrorNotification("Comparison Error", msg);
-              showErrorNotification("Comparison Error", msg);
-    } finally {
-      setComparing(false);
-    }
-  }
-
-  const chartData = useMemo(() => {
-    if (!result) return [] as Array<Record<string, number | string>>;
-    const timeline = result.series.portfolio.map((p) => p.date);
-    const perAssetPrices = result.series.perAssetPrices || {};
-    const perAssetWeights = result.series.perAssetWeights || {};
-    return result.series.portfolio.map((p, i) => {
-      const row: Record<string, number | string> = {
-        date: p.date,
-        value: p.value,
-        invested: initialCapital,
-      };
-      allocations.forEach((a) => {
-        const price = perAssetPrices[a.id]?.[i];
-        const weight = perAssetWeights[a.id]?.[i];
-        if (price != null) row[`${a.id}_price`] = price;
-        if (weight != null) row[`${a.id}_weight`] = weight * 100;
-      });
-      return row;
-    });
-  }, [result, initialCapital, allocations]);
-
-
-
-
-  const handleLoadPortfolio = (cfg: SavedRecord) => {
-    setAllocations([...cfg.allocations]);
-    setStart(cfg.start);
-    setEnd(cfg.end);
-    setMode(cfg.mode);
-    setPeriodDays(cfg.periodDays ?? 30);
-    setThresholdPct(cfg.thresholdPct ?? 5);
-    setInitialCapital(cfg.initialCapital ?? 100);
-    showSuccessNotification("Portfolio Loaded", `Loaded portfolio configuration`);
-  };
-
-  const handleLoadPortfolioAllocations = (allocations: AllocationRow[]) => {
-    setAllocations([...allocations]);
-    showSuccessNotification("Portfolio Loaded", `Loaded portfolio allocations`);
-  };
+  const stats = [
+    { label: "Supported Chains", value: "Base", icon: IconShield },
+    { label: "DeFi Protocols", value: "Aave", icon: IconBuildingBank },
+    { label: "Features", value: "4+", icon: IconTrendingUp },
+    { label: "Roadmap Phases", value: "5", icon: IconRocket }
+  ];
 
   return (
-    <div className="space-y-8">
+    <div className="min-h-screen">
       {/* Hero Section */}
-      <section className="hero">
-        <h1 className="hero-title">Advanced Portfolio Backtesting</h1>
-        <p className="hero-subtitle">
-          Test your crypto investment strategies with historical data. Analyze performance, 
-          optimize allocations, and make data-driven decisions.
-        </p>
-      </section>
-
-      {/* Stats Cards */}
-      <section className="stats-grid">
-        <div className="stat-card">
-          <div className="stat-value">{allocations.length}</div>
-          <div className="stat-label">Assets</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{(allocationSum * 100).toFixed(1)}%</div>
-          <div className="stat-label">Allocated</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">${initialCapital}</div>
-          <div className="stat-label">Initial Capital</div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-value">{Object.keys(saved).length}</div>
-          <div className="stat-label">Saved Portfolios</div>
-        </div>
-      </section>
-
-      {/* Main Widgets */}
-      <section className="widget-grid">
-        <PortfolioBuilder
-          allocations={allocations}
-          setAllocations={setAllocations}
-          spot={spot}
-          logos={logos}
-          initialCapital={initialCapital}
-          setInitialCapital={setInitialCapital}
-          onSave={saveCurrentPortfolio}
-          allocationSum={allocationSum}
-          onLoadPortfolio={handleLoadPortfolioAllocations}
-        />
-
-        <SavedPortfoliosWidget
-          saved={saved}
-          setSaved={setSaved}
-          onLoadPortfolio={handleLoadPortfolio}
-          onCompareAll={compareAll}
-          mounted={mounted}
-          logos={logos}
-        />
-
-        <DateRangeWidget
-          start={start}
-          setStart={setStart}
-          end={end}
-          setEnd={setEnd}
-        />
-
-        <RebalancingWidget
-          mode={mode}
-          setMode={setMode}
-          periodDays={periodDays}
-          setPeriodDays={setPeriodDays}
-          thresholdPct={thresholdPct}
-          setThresholdPct={setThresholdPct}
-          loading={loading}
-          error={error}
-          allocationSum={allocationSum}
-        />
-      </section>
-
-      {/* Standalone Run Button */}
-      <section className="flex justify-center">
-        <div className="card max-w-md w-full">
-          <div className="text-center space-y-4">
-            <div>
-              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Ready to Backtest?</h3>
-              <p className="text-sm text-[rgb(var(--fg-secondary))]">
-                Configure your portfolio, date range, and rebalancing strategy above
-              </p>
-            </div>
+      <section className="hero text-center py-20">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto">
+            <h1 className="hero-title text-5xl md:text-6xl lg:text-7xl font-bold mb-6">
+              DeBank
+              <span className="block text-2xl md:text-3xl lg:text-4xl font-normal text-[rgb(var(--fg-secondary))] mt-2">
+                (DeFi Bank)
+              </span>
+            </h1>
+            <p className="hero-subtitle text-xl md:text-2xl mb-8 max-w-3xl mx-auto">
+              From Aave Base Markets to Multi-Chain Portfolio Management — and Beyond
+            </p>
+            <p className="text-lg text-[rgb(var(--fg-secondary))] mb-12 max-w-2xl mx-auto">
+              A non-custodial platform for testing and managing DeFi portfolios. 
+              Start with Aave Base markets and grow into a comprehensive DeFi ecosystem.
+            </p>
             
-            <button 
-              onClick={run} 
-              disabled={Math.abs(allocationSum - 1) > 1e-4 || loading}
-              className="btn btn-primary btn-lg w-full"
-            >
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Running Backtest...
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <IconChartLine size={20} />
-                  Run Backtest
-                </div>
-              )}
-            </button>
-            
-            {error && (
-              <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg text-red-300 text-sm">
-                {error}
-              </div>
-            )}
-            
-            {Math.abs(allocationSum - 1) > 1e-4 && (
-              <div className="p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
-                ⚠️ Portfolio allocation is not 100%. Current allocation: {(allocationSum * 100).toFixed(1)}%
-              </div>
-            )}
+            {/* CTA Buttons */}
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
+              <Link href="/backtest" className="btn btn-primary btn-lg">
+                <IconChartLine size={20} />
+                Start Backtesting
+              </Link>
+              <Link href="/roadmap" className="btn btn-secondary btn-lg">
+                <IconRoad size={20} />
+                View Roadmap
+              </Link>
+            </div>
+
+            {/* Wallet Connection */}
+            <div className="flex justify-center">
+              <WalletWidget />
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Loading State */}
-      {loading && (
-        <section className="space-y-6">
-          <div className="stats-grid">
-            <div className="stat-card skeleton h-20" />
-            <div className="stat-card skeleton h-20" />
-            <div className="stat-card skeleton h-20" />
-            <div className="stat-card skeleton h-20" />
-          </div>
-          <div className="chart-container">
-            <div className="skeleton h-96 w-full" />
-          </div>
-        </section>
-      )}
-
-      {/* Results */}
-      {result && (
-        <section className="space-y-6">
-          {/* Metrics Grid */}
-          <div className="stats-grid">
-            <div className="stat-card">
-              <div className="stat-value">${result.metrics.finalValue.toFixed(2)}</div>
-              <div className="stat-label">Final Value</div>
-            </div>
-            <div className="stat-card">
-              <div className={`stat-value ${result.metrics.cumulativeReturnPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {result.metrics.cumulativeReturnPct >= 0 ? "+" : ""}{result.metrics.cumulativeReturnPct.toFixed(2)}%
-              </div>
-              <div className="stat-label">Cumulative Return</div>
-            </div>
-            <div className="stat-card">
-              <div className={`stat-value ${result.metrics.cagrPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {result.metrics.cagrPct >= 0 ? "+" : ""}{result.metrics.cagrPct.toFixed(2)}%
-              </div>
-              <div className="stat-label">CAGR</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">${result.metrics.initialCapital.toFixed(2)}</div>
-              <div className="stat-label">Initial Capital</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value text-red-400">{result.metrics.maxDrawdownPct.toFixed(2)}%</div>
-              <div className="stat-label">Max Drawdown</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{result.metrics.sharpe == null ? "—" : result.metrics.sharpe.toFixed(2)}</div>
-              <div className="stat-label">Sharpe Ratio</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{result.risk?.riskReward == null ? "—" : result.risk.riskReward.toFixed(2)}</div>
-              <div className="stat-label">Risk/Reward</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{result.metrics.volatilityPct.toFixed(2)}%</div>
-              <div className="stat-label">Volatility</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value text-xs font-normal leading-tight">
-                <div className="flex flex-wrap gap-2 items-center">
-                  {allocations.map((a, index) => (
-                    <div key={a.id} className="flex items-center gap-1">
-                      {logos[a.id] && (
-                        <Image
-                          src={logos[a.id]}
-                          alt={ASSET_ID_TO_SYMBOL[a.id]}
-                          width={16}
-                          height={16}
-                          className="rounded-full"
-                        />
-                      )}
-                      <span className="text-xs">
-                        {ASSET_ID_TO_SYMBOL[a.id]} {(a.allocation * 100).toFixed(1)}%
-                      </span>
-                      {index < allocations.length - 1 && <span className="text-gray-400">•</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="stat-label">Composition</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value text-sm font-normal">
-                {mode === "none" && "None"}
-                {mode === "periodic" && `Every ${periodDays} day${periodDays === 1 ? '' : 's'}`}
-                {mode === "threshold" && `Deviation ±${thresholdPct}%`}
-              </div>
-              <div className="stat-label">Rebalancing</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-value">{(differenceInCalendarDays(new Date(result.metrics.endDate), new Date(result.metrics.startDate)) / 365).toFixed(1)}y</div>
-              <div className="stat-label">{result.metrics.startDate} → {result.metrics.endDate}</div>
-            </div>
-          </div>
-
-          {/* Portfolio Chart */}
-          <div className="chart-container">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Portfolio Performance</h2>
-                <p className="text-[rgb(var(--fg-secondary))]">
-                  {allocations.map(a => `${ASSET_ID_TO_SYMBOL[a.id]} ${(a.allocation * 100).toFixed(1)}%`).join(" • ")}
-                </p>
-              </div>
-              <div className="text-right">
-                <div className="text-lg font-semibold text-[rgb(var(--fg-primary))]">
-                  ${result.metrics.finalValue.toFixed(2)}
-                </div>
-                <div className={`text-sm ${result.metrics.cumulativeReturnPct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {result.metrics.cumulativeReturnPct >= 0 ? "+" : ""}{result.metrics.cumulativeReturnPct.toFixed(2)}% 
-                  ({result.metrics.cagrPct >= 0 ? "+" : ""}{result.metrics.cagrPct.toFixed(2)}% CAGR)
-                </div>
-              </div>
-            </div>
-            <PortfolioChart data={chartData} />
-          </div>
-
-          {/* Additional Metrics */}
-          <div className="widget-grid">
-            <div className="card">
-              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Per-Asset Risk (Volatility %)</h3>
-              <div className="space-y-2">
-                {Object.entries(result.risk?.perAssetVolatilityPct || {}).map(([id, v]) => (
-                  <div key={id} className="flex items-center justify-between">
-                    <span className="text-[rgb(var(--fg-secondary))]">{ASSET_ID_TO_SYMBOL[id as AssetId]}</span>
-                    <span className="font-semibold">{v.toFixed(2)}%</span>
+      {/* Stats Section */}
+      <section className="py-16 bg-[rgb(var(--bg-secondary))]">
+        <div className="container mx-auto px-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            {stats.map((stat, index) => {
+              const Icon = stat.icon;
+              return (
+                <div key={index} className="text-center">
+                  <div className="w-16 h-16 bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Icon size={24} className="text-white" />
                   </div>
-                ))}
-              </div>
+                  <div className="text-3xl font-bold text-[rgb(var(--fg-primary))] mb-2">{stat.value}</div>
+                  <div className="text-[rgb(var(--fg-secondary))]">{stat.label}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Features Section */}
+      <section className="py-20">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-[rgb(var(--fg-primary))] mb-4">Platform Features</h2>
+            <p className="text-xl text-[rgb(var(--fg-secondary))] max-w-2xl mx-auto">
+              Everything you need to manage and optimize your DeFi portfolio
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {features.map((feature, index) => {
+              const Icon = feature.icon;
+              return (
+                <Link key={index} href={feature.href} className="group">
+                  <div className="card hover:scale-105 transition-all duration-300 cursor-pointer">
+                    <div className="flex items-start gap-4">
+                      <div className={`w-12 h-12 ${feature.color} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                        <Icon size={24} className="text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-xl font-semibold text-[rgb(var(--fg-primary))] mb-2 group-hover:text-[rgb(var(--accent-primary))] transition-colors">
+                          {feature.title}
+                        </h3>
+                        <p className="text-[rgb(var(--fg-secondary))] leading-relaxed">
+                          {feature.description}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Roadmap Preview */}
+      <section className="py-20 bg-[rgb(var(--bg-secondary))]">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-[rgb(var(--fg-primary))] mb-4">Development Roadmap</h2>
+            <p className="text-xl text-[rgb(var(--fg-secondary))] max-w-2xl mx-auto">
+              Our journey from MVP to DeFi-powered neobank
+            </p>
+          </div>
+          
+          <div className="max-w-4xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              {roadmapHighlights.map((item, index) => (
+                <div key={index} className="text-center">
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${
+                    item.status === 'current' ? 'bg-green-500' :
+                    item.status === 'upcoming' ? 'bg-blue-500' :
+                    'bg-purple-500'
+                  }`}>
+                    <span className="text-white font-bold text-sm">{item.phase}</span>
+                  </div>
+                  <h3 className="font-semibold text-[rgb(var(--fg-primary))] mb-2">{item.title}</h3>
+                  <p className="text-sm text-[rgb(var(--fg-secondary))] leading-relaxed">{item.description}</p>
+                </div>
+              ))}
             </div>
             
-            <div className="card">
-              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Data Quality</h3>
-              <div className="flex items-center gap-3">
-                <div className={`badge ${result.integrity && result.integrity.score >= 90 ? 'badge-success' : result.integrity && result.integrity.score >= 70 ? 'badge-primary' : ''}`}>
-                  Score: {result.integrity ? result.integrity.score : 0}/100
+            <div className="text-center mt-12">
+              <Link href="/roadmap" className="btn btn-primary">
+                <IconRoad size={18} />
+                View Full Roadmap
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Problem & Solution */}
+      <section className="py-20">
+        <div className="container mx-auto px-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+              <div>
+                <h2 className="text-3xl font-bold text-[rgb(var(--fg-primary))] mb-6">The Problem</h2>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">Hard to backtest and deploy diversified DeFi strategies</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">Multiple transactions required for portfolio management</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">Fragmented liquidity across different protocols</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-red-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">No bridge between DeFi growth and real-world expenses</p>
+                  </div>
                 </div>
               </div>
-              {result.integrity?.issues && result.integrity.issues.length > 0 && (
-                <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg">
-                  <div className="text-sm font-semibold text-yellow-300 mb-2">Issues detected:</div>
-                  <ul className="text-xs text-yellow-200 space-y-1">
-                    {result.integrity.issues.slice(0, 3).map((issue, i) => (
-                      <li key={i}>• {issue}</li>
-                    ))}
-                    {result.integrity.issues.length > 3 && (
-                      <li>• ... and {result.integrity.issues.length - 3} more</li>
-                    )}
-                  </ul>
+              
+              <div>
+                <h2 className="text-3xl font-bold text-[rgb(var(--fg-primary))] mb-6">Our Solution</h2>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">One-click Aave Base market portfolio deployment</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">Advanced backtesting with historical data</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">Multi-chain expansion roadmap</p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-2 h-2 bg-green-500 rounded-full mt-2 flex-shrink-0"></div>
+                    <p className="text-[rgb(var(--fg-secondary))]">Future DeFi-powered credit integration</p>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
-        </section>
-      )}
+        </div>
+      </section>
 
-      {/* Comparison Chart - always after results section */}
-      {comparisonLines.length > 0 && (
-        <section className="chart-container">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h2 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">Portfolio Comparison</h2>
-              <p className="text-[rgb(var(--fg-secondary))]">
-                Comparing {comparisonLines.length} saved portfolios
-              </p>
-            </div>
-            <button
-              onClick={() => {
-                setComparisonLines([]);
-                setComparisonData([]);
-              }}
-              className="btn btn-secondary"
-            >
-              Close Comparison
-            </button>
+      {/* Target Audience */}
+      <section className="py-20 bg-[rgb(var(--bg-secondary))]">
+        <div className="container mx-auto px-4">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-[rgb(var(--fg-primary))] mb-4">Built For Everyone</h2>
+            <p className="text-xl text-[rgb(var(--fg-secondary))] max-w-2xl mx-auto">
+              From retail investors to institutions, DeBank serves all DeFi users
+            </p>
           </div>
-          <ComparisonChart data={comparisonData} lines={comparisonLines} />
-        </section>
-      )}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="card text-center">
+              <div className="w-16 h-16 bg-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <IconUsers size={24} className="text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Retail Investors</h3>
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">Start with Aave Base market strategies</p>
+            </div>
+            
+            <div className="card text-center">
+              <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <IconTrendingUp size={24} className="text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Advanced Users</h3>
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">Access to LP strategies and complex portfolios</p>
+            </div>
+            
+            <div className="card text-center">
+              <div className="w-16 h-16 bg-purple-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <IconBuildingBank size={24} className="text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Institutions</h3>
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">ERC-4626 vault wrappers and compliance</p>
+            </div>
+            
+            <div className="card text-center">
+              <div className="w-16 h-16 bg-orange-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                <IconCreditCard size={24} className="text-white" />
+              </div>
+              <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Everyday Users</h3>
+              <p className="text-sm text-[rgb(var(--fg-secondary))]">Credit cards linked to DeFi yield (Phase 5)</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-20">
+        <div className="container mx-auto px-4 text-center">
+          <div className="max-w-3xl mx-auto">
+            <h2 className="text-4xl font-bold text-[rgb(var(--fg-primary))] mb-6">Ready to Get Started?</h2>
+            <p className="text-xl text-[rgb(var(--fg-secondary))] mb-8">
+              Join the future of DeFi portfolio management. Start with our MVP and grow with our roadmap.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Link href="/backtest" className="btn btn-primary btn-lg">
+                <IconChartLine size={20} />
+                Try Portfolio Backtesting
+              </Link>
+              <Link href="/aave" className="btn btn-secondary btn-lg">
+                <IconBuildingBank size={20} />
+                Explore Aave Integration
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

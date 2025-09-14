@@ -448,13 +448,13 @@ export async function fetchRealAaveMarketData(targetChainId: number): Promise<Aa
         console.log(`Price for ${token.symbol}: $${price}`);
 
         // Calculate APY from rates (rates are in RAY units, 1e27)
-        const supplyAPY = (Number(reserveData.currentLiquidityRate) / 1e27) * 100;
-        const borrowAPY = (Number(reserveData.currentVariableBorrowRate) / 1e27) * 100;
+        const supplyAPY = (Number(reserveData[3]) / 1e27) * 100;
+        const borrowAPY = (Number(reserveData[4]) / 1e27) * 100;
 
         // For now, use simplified calculations since we don't have total supply/borrow
         // We'll use the liquidity and variable borrow indices as proxies
-        const totalSupply = Number(reserveData.liquidityIndex) / 1e27;
-        const totalBorrow = Number(reserveData.variableBorrowIndex) / 1e27;
+        const totalSupply = Number(reserveData[1]) / 1e27;
+        const totalBorrow = Number(reserveData[2]) / 1e27;
         const utilizationRate = totalSupply > 0 ? (totalBorrow / totalSupply) * 100 : 0;
 
         console.log(`Calculated values for ${token.symbol}:`, {
@@ -566,12 +566,12 @@ async function fetchAaveDataWithSDK(targetChainId: number, poolAddress: string):
  * Get mock pool data for a specific chain
  */
 export function getMockPoolDataForChain(targetChainId: number): AavePoolInfo[] {
-  if (MOCK_MARKET_DATA[targetChainId.toString()]) {
-    const mockReserves = MOCK_MARKET_DATA[targetChainId.toString()].reserves;
+  if (MOCK_MARKET_DATA[targetChainId.toString() as keyof typeof MOCK_MARKET_DATA]) {
+    const mockReserves = MOCK_MARKET_DATA[targetChainId.toString() as keyof typeof MOCK_MARKET_DATA].reserves;
     console.log(`Using mock data for chain ${targetChainId}:`, mockReserves);
     
     // Ensure mock data is properly formatted as AavePoolInfo
-    const formattedReserves = mockReserves.map((reserve: any) => ({
+    const formattedReserves = mockReserves.map((reserve: Record<string, unknown>) => ({
       symbol: reserve.symbol,
       address: reserve.address,
       totalSupply: reserve.totalSupply,
@@ -602,8 +602,8 @@ export async function fetchAaveMarkets(targetChainId: number) {
     console.log("Using mock data for market fetching");
     
     // Return mock data for supported networks
-    if (MOCK_MARKET_DATA[targetChainId.toString()]) {
-      return [MOCK_MARKET_DATA[targetChainId.toString()]];
+    if (MOCK_MARKET_DATA[targetChainId.toString() as keyof typeof MOCK_MARKET_DATA]) {
+      return [MOCK_MARKET_DATA[targetChainId.toString() as keyof typeof MOCK_MARKET_DATA]];
     }
     
     return [];
@@ -653,16 +653,23 @@ export async function fetchAaveMarket(marketAddress: string, targetChainId: numb
 /**
  * Convert Aave Reserve data to our AavePoolInfo format
  */
-export function convertReserveToPoolInfo(reserve: any): AavePoolInfo {
+export function convertReserveToPoolInfo(reserve: Record<string, unknown>): AavePoolInfo {
+  const underlyingToken = reserve.underlyingToken as Record<string, unknown>;
+  const size = reserve.size as Record<string, unknown>;
+  const amount = size.amount as Record<string, unknown>;
+  const borrowInfo = reserve.borrowInfo as Record<string, unknown> | undefined;
+  const totalBorrowed = borrowInfo?.totalBorrowed as Record<string, unknown> | undefined;
+  const borrowedAmount = totalBorrowed?.amount as Record<string, unknown> | undefined;
+  
   return {
-    symbol: reserve.underlyingToken.symbol,
-    address: reserve.underlyingToken.address,
-    totalSupply: reserve.size.amount.value || "0",
-    totalBorrow: reserve.borrowInfo?.totalBorrowed?.amount?.value || "0",
-    supplyAPY: Number(reserve.supplyInfo.apy) || 0,
-    borrowAPY: Number(reserve.borrowInfo?.apy) || 0,
-    utilizationRate: Number(reserve.borrowInfo?.utilizationRate) || 0,
-    liquidity: reserve.size.amount.value || "0",
+    symbol: underlyingToken.symbol as string,
+    address: underlyingToken.address as string,
+    totalSupply: (amount.value as string) || "0",
+    totalBorrow: (borrowedAmount?.value as string) || "0",
+    supplyAPY: Number((reserve.supplyInfo as Record<string, unknown>)?.apy) || 0,
+    borrowAPY: Number(borrowInfo?.apy) || 0,
+    utilizationRate: Number(borrowInfo?.utilizationRate) || 0,
+    liquidity: (amount.value as string) || "0",
     price: Number(reserve.usdExchangeRate) || 1.0,
   };
 }
@@ -670,14 +677,14 @@ export function convertReserveToPoolInfo(reserve: any): AavePoolInfo {
 /**
  * Convert real Aave market data to our format
  */
-export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
+export function convertMarketToPoolInfos(marketData: Record<string, unknown>): AavePoolInfo[] {
   const poolInfos: AavePoolInfo[] = [];
   
   console.log("Converting market data:", JSON.stringify(marketData, null, 2));
   
   // Process supply reserves
   if (marketData.supplyReserves) {
-    for (const reserve of marketData.supplyReserves) {
+    for (const reserve of (marketData.supplyReserves as Record<string, unknown>[])) {
       console.log("Processing supply reserve:", reserve);
       
       // Extract data with proper fallbacks and validation
@@ -685,8 +692,10 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       let totalBorrow = "0";
       
       // Extract total supply from nested structure
-      if (reserve.size?.amount?.value) {
-        totalSupply = String(reserve.size.amount.value);
+      const size = reserve.size as Record<string, unknown> | undefined;
+      const amount = size?.amount as Record<string, unknown> | undefined;
+      if (amount?.value) {
+        totalSupply = String(amount.value);
       } else if (reserve.totalSupply) {
         totalSupply = String(reserve.totalSupply);
       } else if (reserve.size) {
@@ -695,23 +704,27 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       }
       
       // Extract total borrow from nested structure
-      if (reserve.borrowInfo?.totalBorrowed?.amount?.value) {
-        totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount.value);
-      } else if (reserve.borrowInfo?.total) {
-        totalBorrow = String(reserve.borrowInfo.total);
-      } else if (reserve.borrowInfo?.totalBorrowed) {
+      const borrowInfo = reserve.borrowInfo as Record<string, unknown> | undefined;
+      const totalBorrowed = borrowInfo?.totalBorrowed as Record<string, unknown> | undefined;
+      const borrowedAmount = totalBorrowed?.amount as Record<string, unknown> | undefined;
+      
+      if (borrowedAmount?.value) {
+        totalBorrow = String(borrowedAmount.value);
+      } else if (borrowInfo?.total) {
+        totalBorrow = String(borrowInfo.total);
+      } else if (totalBorrowed) {
         // Handle case where totalBorrowed is an object
-        if (typeof reserve.borrowInfo.totalBorrowed === 'object') {
+        if (typeof totalBorrowed === 'object') {
           // Try to extract value from object
-          if (reserve.borrowInfo.totalBorrowed.value) {
-            totalBorrow = String(reserve.borrowInfo.totalBorrowed.value);
-          } else if (reserve.borrowInfo.totalBorrowed.amount) {
-            totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount);
+          if (totalBorrowed.value) {
+            totalBorrow = String(totalBorrowed.value);
+          } else if (totalBorrowed.amount) {
+            totalBorrow = String(totalBorrowed.amount);
           } else {
             totalBorrow = "0";
           }
         } else {
-          totalBorrow = String(reserve.borrowInfo.totalBorrowed);
+          totalBorrow = String(totalBorrowed);
         }
       }
       
@@ -726,27 +739,32 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         let rawBorrowAPY = 0;
         
         // Try to get supply APY from the nested structure
-        if (reserve.supplyInfo?.apy?.formatted) {
-          rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.formatted);
-        } else if (reserve.supplyInfo?.apy?.value) {
-          rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.value) * 100; // Convert decimal to percentage
-        } else if (reserve.supplyInfo?.apy) {
-          rawSupplyAPY = typeof reserve.supplyInfo.apy === 'string' ? parseFloat(reserve.supplyInfo.apy) : Number(reserve.supplyInfo.apy);
-        } else if (reserve.supplyInfo?.rate) {
+        const supplyInfo = reserve.supplyInfo as Record<string, unknown> | undefined;
+        const supplyApy = supplyInfo?.apy as Record<string, unknown> | undefined;
+        
+        if (supplyApy?.formatted) {
+          rawSupplyAPY = parseFloat(supplyApy.formatted as string);
+        } else if (supplyApy?.value) {
+          rawSupplyAPY = parseFloat(supplyApy.value as string) * 100; // Convert decimal to percentage
+        } else if (supplyApy) {
+          rawSupplyAPY = typeof supplyApy === 'string' ? parseFloat(supplyApy) : Number(supplyApy);
+        } else if (supplyInfo?.rate) {
           // Alternative field name
-          rawSupplyAPY = typeof reserve.supplyInfo.rate === 'string' ? parseFloat(reserve.supplyInfo.rate) : Number(reserve.supplyInfo.rate);
+          rawSupplyAPY = typeof supplyInfo.rate === 'string' ? parseFloat(supplyInfo.rate as string) : Number(supplyInfo.rate);
         }
         
         // Try to get borrow APY from the nested structure
-        if (reserve.borrowInfo?.apy?.formatted) {
-          rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.formatted);
-        } else if (reserve.borrowInfo?.apy?.value) {
-          rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.value) * 100; // Convert decimal to percentage
-        } else if (reserve.borrowInfo?.apy) {
-          rawBorrowAPY = typeof reserve.borrowInfo.apy === 'string' ? parseFloat(reserve.borrowInfo.apy) : Number(reserve.borrowInfo.apy);
-        } else if (reserve.borrowInfo?.rate) {
+        const borrowApy = borrowInfo?.apy as Record<string, unknown> | undefined;
+        
+        if (borrowApy?.formatted) {
+          rawBorrowAPY = parseFloat(borrowApy.formatted as string);
+        } else if (borrowApy?.value) {
+          rawBorrowAPY = parseFloat(borrowApy.value as string) * 100; // Convert decimal to percentage
+        } else if (borrowApy) {
+          rawBorrowAPY = typeof borrowApy === 'string' ? parseFloat(borrowApy) : Number(borrowApy);
+        } else if (borrowInfo?.rate) {
           // Alternative field name
-          rawBorrowAPY = typeof reserve.borrowInfo.rate === 'string' ? parseFloat(reserve.borrowInfo.rate) : Number(reserve.borrowInfo.rate);
+          rawBorrowAPY = typeof borrowInfo.rate === 'string' ? parseFloat(borrowInfo.rate as string) : Number(borrowInfo.rate);
         }
         
         // Convert to numbers and validate
@@ -757,15 +775,17 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         if (isNaN(supplyAPY)) supplyAPY = 0;
         if (isNaN(borrowAPY)) borrowAPY = 0;
         
-        console.log(`APY extraction for ${reserve.underlyingToken?.symbol}:`, {
+        const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+        console.log(`APY extraction for ${underlyingToken?.symbol}:`, {
           supplyAPY,
           borrowAPY,
-          supplyInfo: reserve.supplyInfo?.apy,
-          borrowInfo: reserve.borrowInfo?.apy
+          supplyInfo: supplyInfo?.apy,
+          borrowInfo: borrowInfo?.apy
         });
         
       } catch (error) {
-        console.warn(`Failed to parse APY values for ${reserve.underlyingToken?.symbol}:`, error);
+        const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+        console.warn(`Failed to parse APY values for ${underlyingToken?.symbol}:`, error);
         supplyAPY = 0;
         borrowAPY = 0;
       }
@@ -775,26 +795,30 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
       try {
         // Extract utilization rate from the nested structure
         let rawUtilization = 0;
-        if (reserve.borrowInfo?.utilizationRate?.formatted) {
-          rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.formatted);
-        } else if (reserve.borrowInfo?.utilizationRate?.value) {
-          rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.value) * 100; // Convert decimal to percentage
-        } else if (reserve.borrowInfo?.utilizationRate) {
-          rawUtilization = typeof reserve.borrowInfo.utilizationRate === 'string' ? parseFloat(reserve.borrowInfo.utilizationRate) : Number(reserve.borrowInfo.utilizationRate);
+        const utilizationRateObj = borrowInfo?.utilizationRate as Record<string, unknown> | undefined;
+        
+        if (utilizationRateObj?.formatted) {
+          rawUtilization = parseFloat(utilizationRateObj.formatted as string);
+        } else if (utilizationRateObj?.value) {
+          rawUtilization = parseFloat(utilizationRateObj.value as string) * 100; // Convert decimal to percentage
+        } else if (borrowInfo?.utilizationRate) {
+          rawUtilization = typeof borrowInfo.utilizationRate === 'string' ? parseFloat(borrowInfo.utilizationRate as string) : Number(borrowInfo.utilizationRate);
         } else if (reserve.utilizationRate) {
-          rawUtilization = typeof reserve.utilizationRate === 'string' ? parseFloat(reserve.utilizationRate) : Number(reserve.utilizationRate);
+          rawUtilization = typeof reserve.utilizationRate === 'string' ? parseFloat(reserve.utilizationRate as string) : Number(reserve.utilizationRate);
         }
         
         utilizationRate = typeof rawUtilization === 'string' ? parseFloat(rawUtilization) : Number(rawUtilization);
         if (isNaN(utilizationRate)) utilizationRate = 0;
         
-        console.log(`Utilization rate for ${reserve.underlyingToken?.symbol}:`, {
+        const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+        console.log(`Utilization rate for ${underlyingToken?.symbol}:`, {
           utilizationRate,
           rawUtilization,
-          borrowInfo: reserve.borrowInfo?.utilizationRate
+          borrowInfo: borrowInfo?.utilizationRate
         });
       } catch (error) {
-        console.warn(`Failed to parse utilization rate for ${reserve.underlyingToken?.symbol}:`, error);
+        const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+        console.warn(`Failed to parse utilization rate for ${underlyingToken?.symbol}:`, error);
         utilizationRate = 0;
       }
       
@@ -804,30 +828,33 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         // Extract price from nested structure
         let rawPrice = 1.0;
         if (reserve.usdExchangeRate) {
-          rawPrice = reserve.usdExchangeRate;
+          rawPrice = reserve.usdExchangeRate as number;
         } else if (reserve.price) {
-          rawPrice = reserve.price;
-        } else if (reserve.size?.usdPerToken) {
-          rawPrice = reserve.size.usdPerToken;
+          rawPrice = reserve.price as number;
+        } else if (size?.usdPerToken) {
+          rawPrice = size.usdPerToken as number;
         }
         
         price = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice);
         if (isNaN(price)) price = 1.0;
         
-        console.log(`Price for ${reserve.underlyingToken?.symbol}:`, {
+        const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+        console.log(`Price for ${underlyingToken?.symbol}:`, {
           price,
           rawPrice,
           usdExchangeRate: reserve.usdExchangeRate,
-          size: reserve.size?.usdPerToken
+          size: size?.usdPerToken
         });
       } catch (error) {
-        console.warn(`Failed to parse price for ${reserve.underlyingToken?.symbol}:`, error);
+        const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+        console.warn(`Failed to parse price for ${underlyingToken?.symbol}:`, error);
         price = 1.0;
       }
       
+              const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
               const poolInfo: AavePoolInfo = {
-          symbol: reserve.underlyingToken?.symbol || reserve.symbol || "UNKNOWN",
-          address: reserve.underlyingToken?.address || reserve.address || "0x0",
+          symbol: (underlyingToken?.symbol as string) || (reserve.symbol as string) || "UNKNOWN",
+          address: (underlyingToken?.address as string) || (reserve.address as string) || "0x0",
           totalSupply: String(totalSupply || "0"),
           totalBorrow: String(totalBorrow || "0"),
           supplyAPY: supplyAPY,
@@ -844,8 +871,9 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
   
   // Process borrow reserves (avoid duplicates)
   if (marketData.borrowReserves) {
-    for (const reserve of marketData.borrowReserves) {
-      const existingIndex = poolInfos.findIndex(p => p.address === (reserve.underlyingToken?.address || reserve.address));
+    for (const reserve of (marketData.borrowReserves as Record<string, unknown>[])) {
+      const underlyingToken = reserve.underlyingToken as Record<string, unknown> | undefined;
+      const existingIndex = poolInfos.findIndex(p => p.address === (underlyingToken?.address || reserve.address));
       if (existingIndex === -1) {
         console.log("Processing borrow reserve:", reserve);
         
@@ -853,8 +881,11 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         let totalBorrow = "0";
         
         // Extract total supply from nested structure
-        if (reserve.size?.amount?.value) {
-          totalSupply = String(reserve.size.amount.value);
+        const size = reserve.size as Record<string, unknown> | undefined;
+        const amount = size?.amount as Record<string, unknown> | undefined;
+        
+        if (amount?.value) {
+          totalSupply = String(amount.value);
         } else if (reserve.totalSupply) {
           totalSupply = String(reserve.totalSupply);
         } else if (reserve.size) {
@@ -863,23 +894,27 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         }
         
         // Extract total borrow from nested structure
-        if (reserve.borrowInfo?.totalBorrowed?.amount?.value) {
-          totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount.value);
-        } else if (reserve.borrowInfo?.total) {
-          totalBorrow = String(reserve.borrowInfo.total);
-        } else if (reserve.borrowInfo?.totalBorrowed) {
+        const borrowInfo = reserve.borrowInfo as Record<string, unknown> | undefined;
+        const totalBorrowed = borrowInfo?.totalBorrowed as Record<string, unknown> | undefined;
+        const borrowedAmount = totalBorrowed?.amount as Record<string, unknown> | undefined;
+        
+        if (borrowedAmount?.value) {
+          totalBorrow = String(borrowedAmount.value);
+        } else if (borrowInfo?.total) {
+          totalBorrow = String(borrowInfo.total);
+        } else if (totalBorrowed) {
           // Handle case where totalBorrowed is an object
-          if (typeof reserve.borrowInfo.totalBorrowed === 'object') {
+          if (typeof totalBorrowed === 'object') {
             // Try to extract value from object
-            if (reserve.borrowInfo.totalBorrowed.value) {
-              totalBorrow = String(reserve.borrowInfo.totalBorrowed.value);
-            } else if (reserve.borrowInfo.totalBorrowed.amount) {
-              totalBorrow = String(reserve.borrowInfo.totalBorrowed.amount);
+            if (totalBorrowed.value) {
+              totalBorrow = String(totalBorrowed.value);
+            } else if (totalBorrowed.amount) {
+              totalBorrow = String(totalBorrowed.amount);
             } else {
               totalBorrow = "0";
             }
           } else {
-            totalBorrow = String(reserve.borrowInfo.totalBorrowed);
+            totalBorrow = String(totalBorrowed);
           }
         }
         
@@ -893,27 +928,32 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
           let rawBorrowAPY = 0;
           
           // Try to get supply APY from the nested structure
-          if (reserve.supplyInfo?.apy?.formatted) {
-            rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.formatted);
-          } else if (reserve.supplyInfo?.apy?.value) {
-            rawSupplyAPY = parseFloat(reserve.supplyInfo.apy.value) * 100; // Convert decimal to percentage
-          } else if (reserve.supplyInfo?.apy) {
-            rawSupplyAPY = typeof reserve.supplyInfo.apy === 'string' ? parseFloat(reserve.supplyInfo.apy) : Number(reserve.supplyInfo.apy);
-          } else if (reserve.supplyInfo?.rate) {
+          const supplyInfo = reserve.supplyInfo as Record<string, unknown> | undefined;
+          const supplyApy = supplyInfo?.apy as Record<string, unknown> | undefined;
+          
+          if (supplyApy?.formatted) {
+            rawSupplyAPY = parseFloat(supplyApy.formatted as string);
+          } else if (supplyApy?.value) {
+            rawSupplyAPY = parseFloat(supplyApy.value as string) * 100; // Convert decimal to percentage
+          } else if (supplyApy) {
+            rawSupplyAPY = typeof supplyApy === 'string' ? parseFloat(supplyApy) : Number(supplyApy);
+          } else if (supplyInfo?.rate) {
             // Alternative field name
-            rawSupplyAPY = typeof reserve.supplyInfo.rate === 'string' ? parseFloat(reserve.supplyInfo.rate) : Number(reserve.supplyInfo.rate);
+            rawSupplyAPY = typeof supplyInfo.rate === 'string' ? parseFloat(supplyInfo.rate as string) : Number(supplyInfo.rate);
           }
           
           // Try to get borrow APY from the nested structure
-          if (reserve.borrowInfo?.apy?.formatted) {
-            rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.formatted);
-          } else if (reserve.borrowInfo?.apy?.value) {
-            rawBorrowAPY = parseFloat(reserve.borrowInfo.apy.value) * 100; // Convert decimal to percentage
-          } else if (reserve.borrowInfo?.apy) {
-            rawBorrowAPY = typeof reserve.borrowInfo.apy === 'string' ? parseFloat(reserve.borrowInfo.apy) : Number(reserve.borrowInfo.apy);
-          } else if (reserve.borrowInfo?.rate) {
+          const borrowApy = borrowInfo?.apy as Record<string, unknown> | undefined;
+          
+          if (borrowApy?.formatted) {
+            rawBorrowAPY = parseFloat(borrowApy.formatted as string);
+          } else if (borrowApy?.value) {
+            rawBorrowAPY = parseFloat(borrowApy.value as string) * 100; // Convert decimal to percentage
+          } else if (borrowApy) {
+            rawBorrowAPY = typeof borrowApy === 'string' ? parseFloat(borrowApy) : Number(borrowApy);
+          } else if (borrowInfo?.rate) {
             // Alternative field name
-            rawBorrowAPY = typeof reserve.borrowInfo.rate === 'string' ? parseFloat(reserve.borrowInfo.rate) : Number(reserve.borrowInfo.rate);
+            rawBorrowAPY = typeof borrowInfo.rate === 'string' ? parseFloat(borrowInfo.rate as string) : Number(borrowInfo.rate);
           }
           
           supplyAPY = typeof rawSupplyAPY === 'string' ? parseFloat(rawSupplyAPY) : Number(rawSupplyAPY);
@@ -922,15 +962,15 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
           if (isNaN(supplyAPY)) supplyAPY = 0;
           if (isNaN(borrowAPY)) borrowAPY = 0;
           
-          console.log(`APY extraction for borrow reserve ${reserve.underlyingToken?.symbol}:`, {
+          console.log(`APY extraction for borrow reserve ${underlyingToken?.symbol}:`, {
             supplyAPY,
             borrowAPY,
-            supplyInfo: reserve.supplyInfo?.apy,
-            borrowInfo: reserve.borrowInfo?.apy
+            supplyInfo: supplyInfo?.apy,
+            borrowInfo: borrowInfo?.apy
           });
           
         } catch (error) {
-          console.warn(`Failed to parse APY values for ${reserve.underlyingToken?.symbol}:`, error);
+          console.warn(`Failed to parse APY values for ${underlyingToken?.symbol}:`, error);
           supplyAPY = 0;
           borrowAPY = 0;
         }
@@ -940,26 +980,28 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
         try {
           // Extract utilization rate from the nested structure
           let rawUtilization = 0;
-          if (reserve.borrowInfo?.utilizationRate?.formatted) {
-            rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.formatted);
-          } else if (reserve.borrowInfo?.utilizationRate?.value) {
-            rawUtilization = parseFloat(reserve.borrowInfo.utilizationRate.value) * 100; // Convert decimal to percentage
-          } else if (reserve.borrowInfo?.utilizationRate) {
-            rawUtilization = typeof reserve.borrowInfo.utilizationRate === 'string' ? parseFloat(reserve.borrowInfo.utilizationRate) : Number(reserve.borrowInfo.utilizationRate);
+          const utilizationRateObj = borrowInfo?.utilizationRate as Record<string, unknown> | undefined;
+          
+          if (utilizationRateObj?.formatted) {
+            rawUtilization = parseFloat(utilizationRateObj.formatted as string);
+          } else if (utilizationRateObj?.value) {
+            rawUtilization = parseFloat(utilizationRateObj.value as string) * 100; // Convert decimal to percentage
+          } else if (borrowInfo?.utilizationRate) {
+            rawUtilization = typeof borrowInfo.utilizationRate === 'string' ? parseFloat(borrowInfo.utilizationRate as string) : Number(borrowInfo.utilizationRate);
           } else if (reserve.utilizationRate) {
-            rawUtilization = typeof reserve.utilizationRate === 'string' ? parseFloat(reserve.utilizationRate) : Number(reserve.utilizationRate);
+            rawUtilization = typeof reserve.utilizationRate === 'string' ? parseFloat(reserve.utilizationRate as string) : Number(reserve.utilizationRate);
           }
           
           utilizationRate = typeof rawUtilization === 'string' ? parseFloat(rawUtilization) : Number(rawUtilization);
           if (isNaN(utilizationRate)) utilizationRate = 0;
           
-          console.log(`Utilization rate for borrow reserve ${reserve.underlyingToken?.symbol}:`, {
+          console.log(`Utilization rate for borrow reserve ${underlyingToken?.symbol}:`, {
             utilizationRate,
             rawUtilization,
-            borrowInfo: reserve.borrowInfo?.utilizationRate
+            borrowInfo: borrowInfo?.utilizationRate
           });
         } catch (error) {
-          console.warn(`Failed to parse utilization rate for ${reserve.underlyingToken?.symbol}:`, error);
+          console.warn(`Failed to parse utilization rate for ${underlyingToken?.symbol}:`, error);
           utilizationRate = 0;
         }
         
@@ -969,30 +1011,30 @@ export function convertMarketToPoolInfos(marketData: any): AavePoolInfo[] {
           // Extract price from nested structure
           let rawPrice = 1.0;
           if (reserve.usdExchangeRate) {
-            rawPrice = reserve.usdExchangeRate;
+            rawPrice = reserve.usdExchangeRate as number;
           } else if (reserve.price) {
-            rawPrice = reserve.price;
-          } else if (reserve.size?.usdPerToken) {
-            rawPrice = reserve.size.usdPerToken;
+            rawPrice = reserve.price as number;
+          } else if (size?.usdPerToken) {
+            rawPrice = size.usdPerToken as number;
           }
           
           price = typeof rawPrice === 'string' ? parseFloat(rawPrice) : Number(rawPrice);
           if (isNaN(price)) price = 1.0;
           
-          console.log(`Price for borrow reserve ${reserve.underlyingToken?.symbol}:`, {
+          console.log(`Price for borrow reserve ${underlyingToken?.symbol}:`, {
             price,
             rawPrice,
             usdExchangeRate: reserve.usdExchangeRate,
-            size: reserve.size?.usdPerToken
+            size: size?.usdPerToken
           });
         } catch (error) {
-          console.warn(`Failed to parse price for ${reserve.underlyingToken?.symbol}:`, error);
+          console.warn(`Failed to parse price for ${underlyingToken?.symbol}:`, error);
           price = 1.0;
         }
         
         const poolInfo: AavePoolInfo = {
-          symbol: reserve.underlyingToken?.symbol || reserve.symbol || "UNKNOWN",
-          address: reserve.underlyingToken?.address || reserve.address || "0x0",
+          symbol: (underlyingToken?.symbol as string) || (reserve.symbol as string) || "UNKNOWN",
+          address: (underlyingToken?.address as string) || (reserve.address as string) || "0x0",
           totalSupply: String(totalSupply || "0"),
           totalBorrow: String(totalBorrow || "0"),
           supplyAPY: supplyAPY,
@@ -1109,7 +1151,7 @@ export async function fetchAaveDataWithGraphQL(targetChainId: number): Promise<A
     
     // Use the new GraphQL endpoint for Aave V3
     // The old endpoints have been deprecated, using the new unified endpoint
-    let graphqlEndpoint = "https://gateway.thegraph.com/api/[api-key]/subgraphs/id/ELUcwgpm14LKPLrBRuVvPvNKHQ9HvwmtKgKSH6123cr7";
+    const graphqlEndpoint = "https://gateway.thegraph.com/api/[api-key]/subgraphs/id/ELUcwgpm14LKPLrBRuVvPvNKHQ9HvwmtKgKSH6123cr7";
     
     // For now, we'll use the same endpoint for all chains since the new API is unified
     // You'll need to replace [api-key] with an actual Graph API key
@@ -1151,7 +1193,7 @@ export async function fetchAaveDataWithGraphQL(targetChainId: number): Promise<A
       },
       body: JSON.stringify({
         query,
-        variables: { poolAddress: addresses.pool.toLowerCase() }
+        variables: { poolAddress: addresses?.pool?.toLowerCase() }
       })
     });
     

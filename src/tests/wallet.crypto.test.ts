@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 
 // Ensure a minimal WebCrypto is present for the test
 if (typeof globalThis.crypto === "undefined") {
-  // @ts-ignore
-  globalThis.crypto = require("node:crypto").webcrypto;
+  // @ts-expect-error - Adding webcrypto polyfill for testing
+  globalThis.crypto = import("node:crypto").then(crypto => crypto.webcrypto);
 }
 
 import { encryptSecret, decryptSecret } from "@/lib/wallet/crypto";

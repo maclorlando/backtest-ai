@@ -50,7 +50,7 @@ export const WALLETCONNECT_CONFIG: WalletConnectConfig = {
 };
 
 export class WalletConnectManager {
-  private provider: EthereumProvider | null = null;
+  private provider: any | null = null;
   private modal: WalletConnectModal | null = null;
   private isInitialized = false;
 
@@ -66,17 +66,7 @@ export class WalletConnectManager {
       // Initialize WalletConnect Modal
       this.modal = new WalletConnectModal({
         projectId: WALLETCONNECT_CONFIG.projectId,
-        chains: WALLETCONNECT_CONFIG.chains,
-        optionalChains: WALLETCONNECT_CONFIG.optionalChains,
-        enableNetworkSwitching: true,
-        enableAccountView: true,
-        enableExplorer: true,
-        explorerRecommendedWalletIds: [
-          'c57ca95b47569778a828d19178114f4db188b89b763c899ba0be274e97267d96', // MetaMask
-          '4622a2b2d6af1c9844944291e5e7351a6aa24cd7b23099efac1b2fd875da31a0', // Trust Wallet
-          '19177a98252e07ddfc9af2083ba8e07ef627cb6103467ffebb3f8f4205fd7927', // Coinbase Wallet
-        ],
-        explorerExcludedWalletIds: 'ALL',
+        chains: WALLETCONNECT_CONFIG.chains.map(String),
         termsOfServiceUrl: 'https://backtest-ai.com/terms',
         privacyPolicyUrl: 'https://backtest-ai.com/privacy',
       });
@@ -85,7 +75,7 @@ export class WalletConnectManager {
       this.provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_CONFIG.projectId,
         chains: WALLETCONNECT_CONFIG.chains,
-        optionalChains: WALLETCONNECT_CONFIG.optionalChains,
+        optionalChains: [base.id],
         methods: WALLETCONNECT_CONFIG.methods,
         events: WALLETCONNECT_CONFIG.events,
         rpcMap: WALLETCONNECT_CONFIG.rpcMap,

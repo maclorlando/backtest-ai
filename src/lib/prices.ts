@@ -273,6 +273,8 @@ async function fetchCoinPaprikaDailyPrices(
     aave: "aave-aave",
     chainlink: "link-chainlink",
     fartcoin: "fart-fartcoin",
+    "wrapped-staked-ether": "wsteth-wrapped-staked-ether",
+    "euro-coin": "euro-euro-coin",
   };
   const paprikaId = idMap[assetId];
   if (!paprikaId) throw new Error(`No CoinPaprika mapping for ${assetId}`);

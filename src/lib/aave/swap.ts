@@ -75,6 +75,16 @@ const ERC20_ABI = [
     stateMutability: "nonpayable",
     type: "function",
   },
+  {
+    inputs: [
+      { internalType: "address", name: "owner", type: "address" },
+      { internalType: "address", name: "spender", type: "address" },
+    ],
+    name: "allowance",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
 ] as const;
 
 // ParaSwap adapter ABI (simplified version)
@@ -331,7 +341,7 @@ export async function swapAndSupplyWithAave(
     );
 
     // Get optimized gas price
-    const gasPrice = await getCurrentGasPrice(publicClient);
+    const gasPrice = await getCurrentGasPrice(publicClient as any);
     console.log(`Using gas price: ${formatUnits(gasPrice, 9)} gwei`);
 
     // Estimate gas for approval transaction
@@ -356,6 +366,8 @@ export async function swapAndSupplyWithAave(
     }
 
     const approveHash = await walletClient.sendTransaction({
+      account: account.address,
+      chain: base,
       to: aTokenAddress,
       data: encodeFunctionData({
         abi: ERC20_ABI,
@@ -385,15 +397,15 @@ export async function swapAndSupplyWithAave(
     
     // Verify the allowance was actually set
     const finalAllowance = await publicClient.readContract({
-      address: fromTokenAddress,
+      address: aTokenAddress,
       abi: ERC20_ABI,
       functionName: "allowance",
-      args: [account.address, tokenTransferProxy],
+      args: [account.address, paraswapConfig.SWAP_ADAPTER],
     });
     console.log(`Final allowance after approval: ${finalAllowance.toString()}`);
     
-    if (finalAllowance < parseUnits(amount, fromDecimals)) {
-      throw new Error(`Approval failed - allowance is still insufficient. Expected: ${parseUnits(amount, fromDecimals).toString()}, Got: ${finalAllowance.toString()}`);
+    if (finalAllowance < parseUnits(amount, 6)) {
+      throw new Error(`Approval failed - allowance is still insufficient. Expected: ${parseUnits(amount, 6).toString()}, Got: ${finalAllowance.toString()}`);
     }
 
     // Get ParaSwap quote
@@ -431,12 +443,12 @@ export async function swapAndSupplyWithAave(
         toToken, // assetToSwapTo
         requiredAmount, // amountToSwap
         minAmountToReceive, // minAmountToReceive
-        0, // swapAllBalanceOffset (0 means don't swap all balance)
+        BigInt(0), // swapAllBalanceOffset (0 means don't swap all balance)
         quote.data, // swapCalldata from ParaSwap
         paraswapConfig.AUGUSTUS, // augustus
         {
-          value: 0,
-          deadline: 0,
+          value: BigInt(0),
+          deadline: BigInt(0),
           v: 0,
           r: "0x0000000000000000000000000000000000000000000000000000000000000000",
           s: "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -453,7 +465,7 @@ export async function swapAndSupplyWithAave(
 
     // Use optimized gas estimation for ParaSwap transactions
     const gasEstimate = await estimateParaSwapGas(
-      publicClient,
+      publicClient as ReturnType<typeof createPublicClient>,
       paraswapConfig.SWAP_ADAPTER,
       swapCalldata,
       account.address,
@@ -470,7 +482,7 @@ export async function swapAndSupplyWithAave(
         await publicClient.call({
           to: paraswapConfig.SWAP_ADAPTER,
           data: swapCalldata,
-          from: account.address,
+          account: account.address,
         });
         console.log("Transaction simulation successful - proceeding with transaction");
         break; // Success, exit the loop
@@ -491,6 +503,8 @@ export async function swapAndSupplyWithAave(
     // Execute the swap and deposit transaction with gas limit and optimized price
     // Add timeout to prevent hanging transactions
     const transactionPromise = walletClient.sendTransaction({
+      account: account.address,
+      chain: base,
       to: paraswapConfig.SWAP_ADAPTER,
       data: swapCalldata,
       value: 0n,

@@ -2,12 +2,18 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
-import { IconChartLine, IconWallet, IconBuildingBank, IconSettings, IconMenu, IconX, IconSun, IconMoon } from "@tabler/icons-react";
+import { IconChartLine, IconWallet, IconBuildingBank, IconSettings, IconMenu, IconX, IconSun, IconMoon, IconRoad, IconHome } from "@tabler/icons-react";
 import WalletWidget from "./WalletWidget";
 
 const navItems = [
   {
     href: "/",
+    label: "Home",
+    icon: IconHome,
+    description: "DeBank landing page"
+  },
+  {
+    href: "/backtest",
     label: "Backtest",
     icon: IconChartLine,
     description: "Portfolio backtesting & analysis"
@@ -17,6 +23,12 @@ const navItems = [
     label: "Aave",
     icon: IconBuildingBank,
     description: "DeFi lending & borrowing"
+  },
+  {
+    href: "/roadmap",
+    label: "Roadmap",
+    icon: IconRoad,
+    description: "Project roadmap & vision"
   },
   {
     href: "/settings",
@@ -59,7 +71,7 @@ export default function Navigation() {
             <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-[rgb(var(--accent-primary))] to-[rgb(var(--accent-secondary))] rounded-lg flex items-center justify-center">
               <IconChartLine size={16} className="text-white sm:w-5 sm:h-5" />
             </div>
-            <span className="text-lg sm:text-xl font-bold text-[rgb(var(--fg-primary))]">Backtest AI</span>
+            <span className="text-lg sm:text-xl font-bold text-[rgb(var(--fg-primary))]">DeBank</span>
           </Link>
 
           {/* Desktop Navigation */}

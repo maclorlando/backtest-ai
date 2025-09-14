@@ -507,7 +507,7 @@ export async function swapTokens(
     });
 
     // Get optimized gas price
-    const gasPrice = await getCurrentGasPrice(publicClient);
+    const gasPrice = await getCurrentGasPrice(publicClient as any);
     console.log(`Using gas price: ${formatUnits(gasPrice, 9)} gwei`);
 
     // Get token info for the swap
