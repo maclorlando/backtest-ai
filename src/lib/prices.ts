@@ -10,6 +10,37 @@ const EXPONENTIAL_BACKOFF_FACTOR = 2;
 let lastRequestTime = 0;
 let consecutiveRateLimits = 0;
 
+// Helper function to determine CoinGecko API endpoint and headers
+function getCoinGeckoConfig(apiKey?: string): { baseUrl: string; headers: Record<string, string> } {
+  const headers: Record<string, string> = { accept: "application/json" };
+  
+  if (!apiKey) {
+    // No API key - use free endpoint
+    return {
+      baseUrl: "https://api.coingecko.com/api/v3",
+      headers
+    };
+  }
+  
+  // Check if it's a demo API key (demo keys typically start with "demo" or are shorter)
+  // Demo keys should use the regular endpoint, not the pro endpoint
+  const isDemoKey = apiKey.toLowerCase().includes('demo') || apiKey.length < 20;
+  
+  if (isDemoKey) {
+    // Demo API key - use regular endpoint with demo key
+    return {
+      baseUrl: "https://api.coingecko.com/api/v3",
+      headers: { ...headers, "x-cg-demo-api-key": apiKey }
+    };
+  } else {
+    // Pro API key - use pro endpoint
+    return {
+      baseUrl: "https://pro-api.coingecko.com/api/v3",
+      headers: { ...headers, "x-cg-pro-api-key": apiKey }
+    };
+  }
+}
+
 // Helper function to handle rate limiting with exponential backoff
 async function makeRateLimitedRequest<T>(
   requestFn: () => Promise<T>,
@@ -170,14 +201,10 @@ async function fetchCoingeckoDailyPrices(
   to: Date,
   apiKey?: string
 ): Promise<PricePoint[]> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const url = `${base}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
+  const config = getCoinGeckoConfig(apiKey);
+  const url = `${config.baseUrl}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
 
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
-
-  const res = await makeRateLimitedRequest(async () => fetch(url, { headers, cache: "no-store" }));
+  const res = await makeRateLimitedRequest(async () => fetch(url, { headers: config.headers, cache: "no-store" }));
   if (!res.ok) {
     throw new Error(`Failed to fetch prices for ${assetId}: ${res.status}`);
   }
@@ -379,15 +406,12 @@ export async function fetchPrices(
 }
 
 export async function fetchCoinLogos(ids: AssetId[], apiKey?: string): Promise<Record<string, string>> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
   const res: Record<string, string> = {};
   await Promise.all(
     ids.map(async (id) => {
       try {
-        const r = await makeRateLimitedRequest(async () => fetch(`${base}/coins/${id}`, { headers, cache: "force-cache" }));
+        const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${id}`, { headers: config.headers, cache: "force-cache" }));
         if (!r.ok) return;
         const data = await r.json();
         const url = data?.image?.small || data?.image?.thumb;
@@ -399,10 +423,7 @@ export async function fetchCoinLogos(ids: AssetId[], apiKey?: string): Promise<R
 }
 
 export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Promise<Record<string, number>> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
   const result: Record<string, number> = {};
   
   // Filter out invalid IDs (like contract addresses)
@@ -459,7 +480,7 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
       const response = await makeRateLimitedRequest(async () => fetch('/api/prices', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: validIds, apiKey: key })
+        body: JSON.stringify({ ids: validIds, apiKey: apiKey })
       }));
       
       if (response.ok) {
@@ -486,8 +507,8 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
   // Server-side: Try to fetch from API with better error handling
   for (const id of validIds) {
     try {
-      const r = await makeRateLimitedRequest(async () => fetch(`${base}/simple/price?ids=${id}&vs_currencies=usd`, { 
-        headers, 
+      const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/simple/price?ids=${id}&vs_currencies=usd`, { 
+        headers: config.headers, 
         cache: "no-store"
       }));
       
@@ -526,14 +547,11 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
  * Fetch comprehensive coin data including images, market data, and social links
  */
 export async function fetchCoinData(coinId: string, apiKey?: string): Promise<CoinGeckoCoin | null> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/coins/${coinId}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=false&sparkline=false`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${coinId}?localization=false&tickers=false&market_data=true&community_data=true&developer_data=false&sparkline=false`, { 
+      headers: config.headers, 
       cache: "force-cache" // Cache for 1 hour
     }));
     
@@ -564,10 +582,7 @@ export async function fetchMarketData(
     price_change_percentage?: string;
   }
 ): Promise<CoinGeckoMarketData[]> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   const params = new URLSearchParams({
     vs_currency: 'usd',
@@ -580,8 +595,8 @@ export async function fetchMarketData(
   });
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/coins/markets?${params}`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/markets?${params}`, { 
+      headers: config.headers, 
       cache: "no-store"
     }));
     
@@ -602,14 +617,11 @@ export async function fetchMarketData(
  * Fetch global cryptocurrency market statistics
  */
 export async function fetchGlobalData(apiKey?: string): Promise<CoinGeckoGlobalData | null> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/global`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/global`, { 
+      headers: config.headers, 
       cache: "no-store"
     }));
     
@@ -630,14 +642,11 @@ export async function fetchGlobalData(apiKey?: string): Promise<CoinGeckoGlobalD
  * Fetch trending coins in the last 24 hours
  */
 export async function fetchTrendingCoins(apiKey?: string): Promise<CoinGeckoTrending | null> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/search/trending`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/search/trending`, { 
+      headers: config.headers, 
       cache: "no-store"
     }));
     
@@ -661,14 +670,11 @@ export async function searchCoins(
   query: string, 
   apiKey?: string
 ): Promise<Array<{ id: string; name: string; symbol: string; market_cap_rank: number; thumb: string; large: string }>> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/search?query=${encodeURIComponent(query)}`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/search?query=${encodeURIComponent(query)}`, { 
+      headers: config.headers, 
       cache: "no-store"
     }));
     
@@ -693,14 +699,11 @@ export async function fetchOHLCData(
   days: number = 7,
   apiKey?: string
 ): Promise<Array<[number, number, number, number, number]>> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/${coinId}/ohlc?vs_currency=usd&days=${days}`, { 
+      headers: config.headers, 
       cache: "no-store"
     }));
     
@@ -721,14 +724,11 @@ export async function fetchOHLCData(
  * Get all supported coins list for autocomplete and discovery
  */
 export async function fetchAllCoins(apiKey?: string): Promise<Array<{ id: string; symbol: string; name: string }>> {
-  const key = apiKey;
-  const base = key ? "https://pro-api.coingecko.com/api/v3" : "https://api.coingecko.com/api/v3";
-  const headers: Record<string, string> = { accept: "application/json" };
-  if (key) headers["x-cg-pro-api-key"] = key;
+  const config = getCoinGeckoConfig(apiKey);
 
   try {
-    const r = await makeRateLimitedRequest(async () => fetch(`${base}/coins/list`, { 
-      headers, 
+    const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/coins/list`, { 
+      headers: config.headers, 
       cache: "force-cache" // Cache for 24 hours
     }));
     
