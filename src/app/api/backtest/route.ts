@@ -53,6 +53,8 @@ export async function POST(req: NextRequest) {
       initialCapital: parsed.initialCapital
     });
 
+    const cgKey = req.headers.get("x-cg-key") || process.env.NEXT_PUBLIC_COINGECKO_API_KEY || undefined;
+
     // Use pre-fetched prices if available, otherwise fetch them
     let prices;
     if (parsed.prices) {
