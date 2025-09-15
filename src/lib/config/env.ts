@@ -60,3 +60,6 @@ export function isPriceOracleEnabled(): boolean {
 export function isMultiNetworkEnabled(): boolean {
   return getEnvironmentConfig().enableMultiNetwork;
 }
+
+// Note: Alchemy API key is now handled securely on the backend
+// No frontend API key management needed

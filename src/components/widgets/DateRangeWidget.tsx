@@ -16,6 +16,9 @@ export default function DateRangeWidget({
   setEnd
 }: DateRangeWidgetProps) {
   const presets = [
+    { label: "1M", years: 1/12 },
+    { label: "3M", years: 0.25 },
+    { label: "6M", years: 0.5 },
     { label: "1Y", years: 1 },
     { label: "2Y", years: 2 },
     { label: "3Y", years: 3 },
@@ -28,6 +31,11 @@ export default function DateRangeWidget({
     setStart(format(subYears(now, years), "yyyy-MM-dd"));
   };
 
+  // Calculate min and max dates (Alchemy API fetches in 365-day chunks)
+  const now = new Date();
+  const maxDate = format(now, "yyyy-MM-dd");
+  const minDate = format(subYears(now, 10), "yyyy-MM-dd"); // Allow up to 10 years back (fetched in chunks)
+
   return (
     <div className="card widget-compact">
       <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Date Range</h3>
@@ -38,6 +46,8 @@ export default function DateRangeWidget({
           <input
             type="date"
             value={start}
+            min={minDate}
+            max={maxDate}
             onChange={(e) => setStart(e.target.value)}
             className="input w-full"
           />
@@ -48,6 +58,8 @@ export default function DateRangeWidget({
           <input
             type="date"
             value={end}
+            min={minDate}
+            max={maxDate}
             onChange={(e) => setEnd(e.target.value)}
             className="input w-full"
           />
@@ -66,6 +78,9 @@ export default function DateRangeWidget({
               </button>
             ))}
           </div>
+          <p className="text-xs text-[rgb(var(--fg-secondary))] mt-2">
+            📊 Longer ranges are automatically fetched in 365-day chunks for optimal performance
+          </p>
         </div>
       </div>
     </div>

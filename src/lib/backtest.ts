@@ -10,10 +10,15 @@ import { fetchPrices, fetchCurrentPricesUSD, fetchCoinData, fetchMarketData, fet
 
 function alignTimeline(priceSeries: Record<string, PricePoint[]>): string[] {
   const allDates = new Set<string>();
-  for (const series of Object.values(priceSeries)) {
-    for (const p of series) allDates.add(p.date);
+  for (const [assetId, series] of Object.entries(priceSeries)) {
+    console.log(`Processing ${assetId} with ${series.length} price points`);
+    for (const p of series) {
+      allDates.add(p.date);
+    }
   }
-  return Array.from(allDates).sort();
+  const timeline = Array.from(allDates).sort();
+  console.log(`Generated timeline with ${timeline.length} dates`);
+  return timeline;
 }
 
 function interpolateLastKnown(
@@ -89,6 +94,8 @@ export function runBacktest(
   req: BacktestRequest,
   priceSeries: Record<string, PricePoint[]>
 ): BacktestResponse {
+  console.log('Backtest input - priceSeries lengths:', Object.entries(priceSeries).map(([key, value]) => `${key}: ${value.length}`));
+  
   const timeline = alignTimeline(priceSeries);
 
   // Integrity tracking

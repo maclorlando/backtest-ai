@@ -379,7 +379,7 @@ export default function WalletPage() {
     try {
       const trending = await fetchTrendingCoins();
       if (trending) {
-        const coins = trending.coins.map(coin => ({
+        const coins = trending.coins.map((coin: any) => ({
           id: coin.item.id,
           name: coin.item.name,
           symbol: coin.item.symbol,

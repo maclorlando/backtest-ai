@@ -18,7 +18,7 @@ DeBank provides a layered platform that starts with Aave Base markets and expand
 - **Portfolio Backtesting**: Test crypto investment strategies with historical data
 - **Wallet Integration**: EVM wallet support with ERC-20 token tracking
 - **Aave Integration**: DeFi lending and borrowing on supported networks
-- **Settings Management**: User-configurable CoinGecko API integration for pricing data
+- **Settings Management**: Alchemy API integration for pricing data
 
 ## 📋 Pages
 
@@ -31,7 +31,7 @@ DeBank provides a layered platform that starts with Aave Base markets and expand
 ## 🛠️ Technology Stack
 
 - **Frontend**: Next.js, React, WalletConnect/RainbowKit
-- **Analytics Engine**: CoinGecko APIs, custom back/forward testing
+- **Analytics Engine**: Alchemy APIs, custom back/forward testing
 - **Smart Contracts**: Aave Base market interactions
 - **Integrations**: Aave Base markets (MVP), roadmap includes Hyperliquid, Kamino, Cetus
 
@@ -49,19 +49,41 @@ npm run dev    # Start development server
 npm run test   # Run unit tests
 ```
 
+## 🔧 Setup
+
+1. **Install dependencies**:
+   ```bash
+   npm install
+   ```
+
+2. **Configure Alchemy API**:
+   - Get an API key from [Alchemy](https://www.alchemy.com/)
+   - Create a `.env.local` file in the project root
+   - Add your API key (backend only - never exposed to frontend):
+     ```
+     ALCHEMY_API_KEY=your_alchemy_api_key_here
+     ```
+
+3. **Start the development server**:
+   ```bash
+   npm run dev
+   ```
+
+See [ALCHEMY_SETUP.md](./ALCHEMY_SETUP.md) for detailed setup instructions.
+
 ## 🔑 API Configuration
 
-DeBank uses CoinGecko API for price data. To enable enhanced features and higher rate limits:
+DeBank uses Alchemy API for price data. To enable enhanced features and higher rate limits:
 
-1. Get a free API key from [CoinGecko](https://www.coingecko.com/en/api)
-2. Go to `/settings` in the app
-3. Enter your API key in the "CoinGecko API Key" field
-4. Save settings
+1. Get a free API key from [Alchemy](https://www.alchemy.com/)
+2. Add the API key to your `.env.local` file as `ALCHEMY_API_KEY` (backend only)
+3. For production, add `ALCHEMY_API_KEY` to your Vercel environment variables
+4. Restart your development server
 
-The app works without an API key but with limited rate limits. With an API key, you get:
-- Higher rate limits for price fetching
-- Access to premium CoinGecko features
-- Better reliability for backtesting and portfolio analysis
+The app requires an API key to function. With an Alchemy API key, you get:
+- Access to historical price data
+- Real-time price information
+- Reliable backtesting and portfolio analysis
 
 ## 📈 Roadmap
 
