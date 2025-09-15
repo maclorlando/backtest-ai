@@ -47,7 +47,11 @@ function getCoinGeckoConfig(apiKey?: string): { baseUrl: string; headers: Record
   
   // Check if it's a demo API key (demo keys typically start with "demo" or are shorter)
   // Demo keys should use the regular endpoint, not the pro endpoint
-  const isDemoKey = apiKey.toLowerCase().includes('demo') || apiKey.length < 20;
+  // Also check for common demo key patterns
+  const isDemoKey = apiKey.toLowerCase().includes('demo') || 
+                   apiKey.length < 20 || 
+                   apiKey.toLowerCase().includes('test') ||
+                   apiKey.toLowerCase().includes('free');
   
   if (isDemoKey) {
     // Demo API key - use regular endpoint with demo key
@@ -428,14 +432,16 @@ export async function fetchPrices(
     try {
       const cg = await fetchCoingeckoDailyPrices(id, startDate, endDate, apiKey);
       if (cg.length > 0) return cg;
-    } catch {
+    } catch (error) {
+      console.warn(`CoinGecko failed for ${id}:`, error);
       // swallow and try fallback
     }
     // Try Binance for major pairs
     try {
       const bin = await fetchBinanceDailyPrices(id, startDate, endDate);
       if (bin.length > 0) return bin;
-    } catch {
+    } catch (error) {
+      console.warn(`Binance failed for ${id}:`, error);
       // swallow and try fallback
     }
     // Stablecoin fallback
@@ -446,7 +452,8 @@ export async function fetchPrices(
     try {
       const paprika = await fetchCoinPaprikaDailyPrices(id, startDate, endDate);
       return paprika;
-    } catch {
+    } catch (error) {
+      console.warn(`CoinPaprika failed for ${id}:`, error);
       // If all providers fail, return empty series to avoid crashing the whole request
       return [];
     }
@@ -574,17 +581,49 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
   // Server-side: Try to fetch from API with better error handling
   for (const id of validIds) {
     try {
-      const r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/simple/price?ids=${id}&vs_currencies=usd`, { 
+      let r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/simple/price?ids=${id}&vs_currencies=usd`, { 
         headers: config.headers, 
         cache: "no-store"
       }), 0, apiKey);
+      
+      // If we get error 10011 (demo key on pro endpoint), retry with regular endpoint
+      if (!r.ok && r.status !== 429) {
+        try {
+          const errorData = await r.json();
+          if (errorData.error_code === 10011 && config.baseUrl.includes('pro-api')) {
+            console.warn(`Detected demo key on pro endpoint, retrying with regular endpoint for ${id}`);
+            const fallbackConfig = {
+              baseUrl: "https://api.coingecko.com/api/v3",
+              headers: { ...config.headers, "x-cg-demo-api-key": apiKey || "" }
+            };
+            r = await makeRateLimitedRequest(async () => fetch(`${fallbackConfig.baseUrl}/simple/price?ids=${id}&vs_currencies=usd`, { 
+              headers: fallbackConfig.headers, 
+              cache: "no-store"
+            }), 0, apiKey);
+          }
+        } catch {
+          // If we can't parse the error, continue with original response
+        }
+      }
       
       if (!r.ok) {
         if (r.status === 429) {
           console.warn(`Rate limited for ${id}, using fallback price`);
           result[id] = fallbackPrices[id.toLowerCase()] || 1.0;
         } else {
-          console.warn(`API error for ${id}: ${r.status}, using fallback price`);
+          // Try to get error details for better debugging
+          let errorDetails = '';
+          try {
+            const errorData = await r.json();
+            if (errorData.error_code === 10011) {
+              console.error(`CoinGecko API Error: ${errorData.status?.error_message || 'Demo API key detected but using wrong endpoint'}`);
+              console.error('This usually means the API key is a demo key but we\'re using the pro endpoint. Check your API key configuration.');
+            }
+            errorDetails = errorData.status?.error_message || `Status ${r.status}`;
+          } catch {
+            errorDetails = `Status ${r.status}`;
+          }
+          console.warn(`API error for ${id}: ${errorDetails}, using fallback price`);
           result[id] = fallbackPrices[id.toLowerCase()] || 1.0;
         }
         continue;
@@ -606,6 +645,107 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
   }
   
   return result;
+}
+
+// New function to check if price data is available without falling back to mock data
+export async function checkPriceDataAvailability(ids: AssetId[], apiKey?: string): Promise<{ available: boolean; error?: string }> {
+  const config = getCoinGeckoConfig(apiKey);
+  
+  // Filter out invalid IDs (like contract addresses)
+  const validIds = ids.filter(id => {
+    return !id.startsWith('0x') && !id.includes('0x') && id.length < 50;
+  });
+  
+  if (validIds.length === 0) {
+    return { available: false, error: "No valid asset IDs provided" };
+  }
+
+  // Check if we're running on the client side
+  const isClient = typeof window !== 'undefined';
+  
+  if (isClient) {
+    // Use API endpoint to avoid CORS issues
+    try {
+      const response = await makeRateLimitedRequest(async () => fetch('/api/prices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: validIds, apiKey: apiKey })
+      }));
+      
+      if (response.ok) {
+        const data = await response.json();
+        // Check if we got real data (not just fallback prices)
+        const hasRealData = Object.values(data).some(price => 
+          typeof price === 'number' && price > 0 && price !== 1.0
+        );
+        return { available: hasRealData };
+      } else {
+        const errorText = await response.text();
+        return { available: false, error: `API error: ${response.status} - ${errorText}` };
+      }
+    } catch (error) {
+      return { available: false, error: `Network error: ${error instanceof Error ? error.message : 'Unknown error'}` };
+    }
+  }
+
+  // Server-side: Try to fetch from API with better error handling
+  try {
+    const testId = validIds[0]; // Test with first asset
+    let r = await makeRateLimitedRequest(async () => fetch(`${config.baseUrl}/simple/price?ids=${testId}&vs_currencies=usd`, { 
+      headers: config.headers, 
+      cache: "no-store"
+    }), 0, apiKey);
+    
+    // If we get error 10011 (demo key on pro endpoint), retry with regular endpoint
+    if (!r.ok && r.status !== 429) {
+      try {
+        const errorData = await r.json();
+        if (errorData.error_code === 10011 && config.baseUrl.includes('pro-api')) {
+          console.warn(`Detected demo key on pro endpoint, retrying with regular endpoint for availability check`);
+          const fallbackConfig = {
+            baseUrl: "https://api.coingecko.com/api/v3",
+            headers: { ...config.headers, "x-cg-demo-api-key": apiKey || "" }
+          };
+          r = await makeRateLimitedRequest(async () => fetch(`${fallbackConfig.baseUrl}/simple/price?ids=${testId}&vs_currencies=usd`, { 
+            headers: fallbackConfig.headers, 
+            cache: "no-store"
+          }), 0, apiKey);
+        }
+      } catch {
+        // If we can't parse the error, continue with original response
+      }
+    }
+    
+    if (!r.ok) {
+      if (r.status === 429) {
+        return { available: false, error: "Rate limited by CoinGecko API" };
+      } else {
+        // Try to get specific error details
+        let errorMessage = `API error: ${r.status}`;
+        try {
+          const errorData = await r.json();
+          if (errorData.error_code === 10011) {
+            errorMessage = "Demo API key detected but using wrong endpoint. Please check your API key configuration.";
+          } else if (errorData.status?.error_message) {
+            errorMessage = errorData.status.error_message;
+          }
+        } catch {
+          // Use default error message
+        }
+        return { available: false, error: errorMessage };
+      }
+    }
+    
+    const data = await r.json();
+    const usd = Number(data?.[testId]?.usd);
+    if (Number.isFinite(usd) && usd > 0) {
+      return { available: true };
+    } else {
+      return { available: false, error: "Invalid price data received" };
+    }
+  } catch (error) {
+    return { available: false, error: `Network error: ${error instanceof Error ? error.message : 'Unknown error'}` };
+  }
 }
 
 // NEW: Enhanced CoinGecko API functions

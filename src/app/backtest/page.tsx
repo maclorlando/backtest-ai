@@ -3,7 +3,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { format, subYears, differenceInCalendarDays } from "date-fns";
 import Image from "next/image";
 import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
-import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
+import { fetchCoinLogos, fetchCurrentPricesUSD, checkPriceDataAvailability } from "@/lib/prices";
 import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
 import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import { getCoinGeckoApiKey } from "@/lib/utils/apiKey";
@@ -29,6 +29,8 @@ export default function BacktestPage() {
   const [thresholdPct, setThresholdPct] = useState(5);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [priceDataAvailable, setPriceDataAvailable] = useState<boolean | null>(null);
+  const [priceDataError, setPriceDataError] = useState<string | null>(null);
   
   type BacktestUIResult = {
     series: {
@@ -84,6 +86,30 @@ export default function BacktestPage() {
     const ids = Array.from(new Set(allocations.map((a) => a.id)));
     const key = getCoinGeckoApiKey();
     fetchCoinLogos(ids, key).then(setLogos).catch(() => {});
+  }, [allocations]);
+
+  // Check price data availability when assets change
+  useEffect(() => {
+    const checkAvailability = async () => {
+      const ids = Array.from(new Set(allocations.map((a) => a.id)));
+      if (ids.length === 0) {
+        setPriceDataAvailable(false);
+        setPriceDataError("No assets selected");
+        return;
+      }
+      
+      const key = getCoinGeckoApiKey();
+      try {
+        const result = await checkPriceDataAvailability(ids, key);
+        setPriceDataAvailable(result.available);
+        setPriceDataError(result.error || null);
+      } catch (error) {
+        setPriceDataAvailable(false);
+        setPriceDataError(error instanceof Error ? error.message : "Unknown error");
+      }
+    };
+    
+    checkAvailability();
   }, [allocations]);
 
   // Hydration-safe load of saved portfolios from localStorage
@@ -434,23 +460,38 @@ export default function BacktestPage() {
               </p>
             </div>
             
-            <button 
-              onClick={run} 
-              disabled={Math.abs(allocationSum - 1) > 1e-4 || loading}
-              className="btn btn-primary btn-lg w-full"
-            >
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Running Backtest...
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <IconChartLine size={20} />
-                  Run Backtest
+            <div className="relative group">
+              <button 
+                onClick={run} 
+                disabled={Math.abs(allocationSum - 1) > 1e-4 || loading || priceDataAvailable === false}
+                className="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Running Backtest...
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <IconChartLine size={20} />
+                    Run Backtest
+                  </div>
+                )}
+              </button>
+              
+              {/* Tooltip for disabled state */}
+              {priceDataAvailable === false && (
+                <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-sm rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-10 max-w-xs">
+                  <div className="text-center">
+                    <div className="font-semibold mb-1">No Price Data Available</div>
+                    <div className="text-xs text-gray-300">
+                      {priceDataError || "Unable to fetch current price data from CoinGecko API. Please check your internet connection or API key."}
+                    </div>
+                  </div>
+                  <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
                 </div>
               )}
-            </button>
+            </div>
             
             {error && (
               <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg text-red-300 text-sm">
@@ -461,6 +502,28 @@ export default function BacktestPage() {
             {Math.abs(allocationSum - 1) > 1e-4 && (
               <div className="p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
                 ⚠️ Portfolio allocation is not 100%. Current allocation: {(allocationSum * 100).toFixed(1)}%
+              </div>
+            )}
+            
+            {/* Price data status indicator */}
+            {priceDataAvailable === null && (
+              <div className="p-3 bg-blue-900/20 border border-blue-700 rounded-lg text-blue-300 text-sm">
+                <div className="flex items-center gap-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-300"></div>
+                  Checking price data availability...
+                </div>
+              </div>
+            )}
+            
+            {priceDataAvailable === true && (
+              <div className="p-3 bg-green-900/20 border border-green-700 rounded-lg text-green-300 text-sm">
+                ✅ Price data available - ready to backtest
+              </div>
+            )}
+            
+            {priceDataAvailable === false && (
+              <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg text-red-300 text-sm">
+                ❌ Price data unavailable - {priceDataError || "Unable to fetch price data"}
               </div>
             )}
           </div>

@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { IconDeviceFloppy, IconTrash, IconSun, IconMoon } from "@tabler/icons-react";
 import { getCoinGeckoApiKey, setCoinGeckoApiKey, hasCoinGeckoApiKey } from "@/lib/utils/apiKey";
+import DebugPriceData from "@/components/DebugPriceData";
 
 export default function SettingsPage() {
   const [key, setKey] = useState("");
@@ -171,6 +172,9 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Debug Price Data */}
+      <DebugPriceData />
 
       {/* About */}
       <div className="card">
