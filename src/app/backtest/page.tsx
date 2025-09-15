@@ -88,7 +88,7 @@ export default function BacktestPage() {
     fetchCoinLogos(ids, key).then(setLogos).catch(() => {});
   }, [allocations]);
 
-  // Check price data availability when assets change
+  // Check price data availability when assets or date range change
   useEffect(() => {
     const checkAvailability = async () => {
       const ids = Array.from(new Set(allocations.map((a) => a.id)));
@@ -98,9 +98,15 @@ export default function BacktestPage() {
         return;
       }
       
+      if (!start || !end) {
+        setPriceDataAvailable(null);
+        setPriceDataError("Date range not set");
+        return;
+      }
+      
       const key = getCoinGeckoApiKey();
       try {
-        const result = await checkPriceDataAvailability(ids, key);
+        const result = await checkPriceDataAvailability(ids, key, start, end);
         setPriceDataAvailable(result.available);
         setPriceDataError(result.error || null);
       } catch (error) {
@@ -110,7 +116,7 @@ export default function BacktestPage() {
     };
     
     checkAvailability();
-  }, [allocations]);
+  }, [allocations, start, end]);
 
   // Hydration-safe load of saved portfolios from localStorage
   useEffect(() => {

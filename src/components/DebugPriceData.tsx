@@ -10,27 +10,37 @@ export default function DebugPriceData() {
   const [apiKey, setApiKey] = useState(getCoinGeckoApiKey() || '');
 
   const testAssets: AssetId[] = ['bitcoin', 'ethereum', 'usd-coin'];
+  const [testStartDate, setTestStartDate] = useState('2023-01-01');
+  const [testEndDate, setTestEndDate] = useState('2023-12-31');
 
   const testPriceData = async () => {
     setTesting(true);
     setResult('Testing...\n');
     
     try {
-      // Test availability check
-      setResult(prev => prev + '1. Testing price data availability...\n');
+      // Test availability check (current prices)
+      setResult(prev => prev + '1. Testing current price data availability...\n');
       const availability = await checkPriceDataAvailability(testAssets, apiKey || undefined);
       setResult(prev => prev + `   Available: ${availability.available}\n`);
       if (availability.error) {
         setResult(prev => prev + `   Error: ${availability.error}\n`);
       }
       
+      // Test historical data availability
+      setResult(prev => prev + '2. Testing historical price data availability...\n');
+      const historicalAvailability = await checkPriceDataAvailability(testAssets, apiKey || undefined, testStartDate, testEndDate);
+      setResult(prev => prev + `   Available: ${historicalAvailability.available}\n`);
+      if (historicalAvailability.error) {
+        setResult(prev => prev + `   Error: ${historicalAvailability.error}\n`);
+      }
+      
       // Test actual price fetching
-      setResult(prev => prev + '2. Testing price fetching...\n');
+      setResult(prev => prev + '3. Testing current price fetching...\n');
       const prices = await fetchCurrentPricesUSD(testAssets, apiKey || undefined);
       setResult(prev => prev + `   Prices: ${JSON.stringify(prices, null, 2)}\n`);
       
       // Test API key info
-      setResult(prev => prev + '3. API Key Info:\n');
+      setResult(prev => prev + '4. API Key Info:\n');
       setResult(prev => prev + `   Has API Key: ${!!apiKey}\n`);
       setResult(prev => prev + `   API Key Length: ${apiKey.length}\n`);
       const isDemoKey = apiKey.toLowerCase().includes('demo') || 
@@ -63,6 +73,31 @@ export default function DebugPriceData() {
             placeholder="Enter your CoinGecko API key or leave empty for free tier"
             className="w-full px-3 py-2 border border-gray-600 rounded-lg bg-[rgb(var(--bg-secondary))] text-[rgb(var(--fg-primary))]"
           />
+        </div>
+        
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">
+              Test Start Date
+            </label>
+            <input
+              type="date"
+              value={testStartDate}
+              onChange={(e) => setTestStartDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg bg-[rgb(var(--bg-secondary))] text-[rgb(var(--fg-primary))]"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">
+              Test End Date
+            </label>
+            <input
+              type="date"
+              value={testEndDate}
+              onChange={(e) => setTestEndDate(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-600 rounded-lg bg-[rgb(var(--bg-secondary))] text-[rgb(var(--fg-primary))]"
+            />
+          </div>
         </div>
         
         <button

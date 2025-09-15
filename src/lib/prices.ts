@@ -259,7 +259,26 @@ async function fetchCoingeckoDailyPrices(
   const config = getCoinGeckoConfig(apiKey);
   const url = `${config.baseUrl}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
 
-  const res = await makeRateLimitedRequest(async () => fetch(url, { headers: config.headers, cache: "no-store" }), 0, apiKey);
+  let res = await makeRateLimitedRequest(async () => fetch(url, { headers: config.headers, cache: "no-store" }), 0, apiKey);
+  
+  // If we get error 10011 (demo key on pro endpoint), retry with regular endpoint
+  if (!res.ok && res.status !== 429) {
+    try {
+      const errorData = await res.json();
+      if (errorData.error_code === 10011 && config.baseUrl.includes('pro-api')) {
+        console.warn(`Detected demo key on pro endpoint, retrying with regular endpoint for historical prices of ${assetId}`);
+        const fallbackConfig = {
+          baseUrl: "https://api.coingecko.com/api/v3",
+          headers: { ...config.headers, "x-cg-demo-api-key": apiKey || "" }
+        };
+        const fallbackUrl = `${fallbackConfig.baseUrl}/coins/${assetId}/market_chart?vs_currency=usd&days=max`;
+        res = await makeRateLimitedRequest(async () => fetch(fallbackUrl, { headers: fallbackConfig.headers, cache: "no-store" }), 0, apiKey);
+      }
+    } catch {
+      // If we can't parse the error, continue with original response
+    }
+  }
+  
   if (!res.ok) {
     throw new Error(`Failed to fetch prices for ${assetId}: ${res.status}`);
   }
@@ -431,7 +450,12 @@ export async function fetchPrices(
     // Try CoinGecko (with or without key)
     try {
       const cg = await fetchCoingeckoDailyPrices(id, startDate, endDate, apiKey);
-      if (cg.length > 0) return cg;
+      if (cg.length > 0) {
+        console.log(`Successfully fetched ${cg.length} price points for ${id} from CoinGecko`);
+        return cg;
+      } else {
+        console.warn(`CoinGecko returned empty data for ${id}`);
+      }
     } catch (error) {
       console.warn(`CoinGecko failed for ${id}:`, error);
       // swallow and try fallback
@@ -475,7 +499,15 @@ export async function fetchPrices(
   }
 
   const out: PricesByAsset = {};
-  unique.forEach((id, i) => (out[id] = results[i]));
+  unique.forEach((id, i) => {
+    out[id] = results[i];
+    console.log(`Final result for ${id}: ${results[i].length} price points`);
+  });
+  
+  // Log summary
+  const totalPoints = Object.values(out).reduce((sum, points) => sum + points.length, 0);
+  console.log(`fetchPrices summary: ${totalPoints} total price points across ${Object.keys(out).length} assets`);
+  
   return out;
 }
 
@@ -648,7 +680,7 @@ export async function fetchCurrentPricesUSD(ids: AssetId[], apiKey?: string): Pr
 }
 
 // New function to check if price data is available without falling back to mock data
-export async function checkPriceDataAvailability(ids: AssetId[], apiKey?: string): Promise<{ available: boolean; error?: string }> {
+export async function checkPriceDataAvailability(ids: AssetId[], apiKey?: string, startDate?: string, endDate?: string): Promise<{ available: boolean; error?: string }> {
   const config = getCoinGeckoConfig(apiKey);
   
   // Filter out invalid IDs (like contract addresses)
@@ -658,6 +690,25 @@ export async function checkPriceDataAvailability(ids: AssetId[], apiKey?: string
   
   if (validIds.length === 0) {
     return { available: false, error: "No valid asset IDs provided" };
+  }
+
+  // If date range is provided, check historical data availability
+  if (startDate && endDate) {
+    try {
+      const testId = validIds[0];
+      const from = new Date(startDate);
+      const to = new Date(endDate);
+      
+      // Try to fetch a small amount of historical data to test availability
+      const testPrices = await fetchCoingeckoDailyPrices(testId, from, to, apiKey);
+      if (testPrices.length > 0) {
+        return { available: true };
+      } else {
+        return { available: false, error: `No historical price data available for ${testId} in the selected date range` };
+      }
+    } catch (error) {
+      return { available: false, error: `Failed to fetch historical data: ${error instanceof Error ? error.message : 'Unknown error'}` };
+    }
   }
 
   // Check if we're running on the client side
