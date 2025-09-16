@@ -20,6 +20,9 @@ import { useApp } from "@/lib/context/AppContext";
 // Import mock data function for fallback
 import { getMockPoolDataForChain } from "@/lib/aave/marketData";
 
+// Import price fetching functions
+import { fetchCurrentPricesUSD } from "@/lib/prices-alchemy";
+
 type SavedRecord = {
   allocations: { id: AssetId; allocation: number }[];
   start: string; end: string; mode: "none" | "periodic" | "threshold";
@@ -42,9 +45,10 @@ export default function AavePage() {
 
   const [supplyAmount, setSupplyAmount] = useState<string>("");
   const [selectedAsset, setSelectedAsset] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"positions" | "deploy" | "supply" | "rebalance">("positions");
+  const [activeTab, setActiveTab] = useState<"positions" | "deploy" | "rebalance">("positions");
   const [rebalanceTargetPortfolio, setRebalanceTargetPortfolio] = useState<string>("");
   const [walletBalances, setWalletBalances] = useState<Array<{ symbol: string; address: Address; balance: string; decimals: number }>>([]);
+  const [assetPrices, setAssetPrices] = useState<Record<string, number>>({});
   const [operationOutput, setOperationOutput] = useState<string[]>([]);
   const [operationProgress, setOperationProgress] = useState<{ current: number; total: number; currentStep: string } | null>(null);
   const [isOutputModalOpen, setIsOutputModalOpen] = useState<boolean>(true);
@@ -68,6 +72,214 @@ export default function AavePage() {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
 
+  // Map asset symbols to AssetId for price fetching
+  const mapSymbolToAssetId = (symbol: string): AssetId | null => {
+    const symbolMap: Record<string, AssetId> = {
+      'USDC': 'usd-coin',
+      'cbBTC': 'bitcoin', // Using Bitcoin for cbBTC as per memory
+      'WETH': 'ethereum',
+      'wstETH': 'wrapped-staked-ether',
+      'EURC': 'euro-coin',
+      'AAVE': 'aave',
+      'USDT': 'tether',
+      'LINK': 'chainlink',
+      'SOL': 'solana',
+      'DOT': 'polkadot',
+      'PEPE': 'pepe',
+      'FART': 'fartcoin',
+    };
+    return symbolMap[symbol] || null;
+  };
+
+  // Fetch current prices for wallet assets
+  async function fetchAssetPrices() {
+    if (walletBalances.length === 0) {
+      console.log('No wallet balances to fetch prices for');
+      return;
+    }
+    
+    try {
+      const assetIds = walletBalances
+        .map(asset => mapSymbolToAssetId(asset.symbol))
+        .filter((id): id is AssetId => id !== null);
+      
+      console.log('Fetching prices for asset IDs:', assetIds);
+      console.log('Wallet balances symbols:', walletBalances.map(a => a.symbol));
+      console.log('Current asset prices before fetch:', assetPrices);
+      
+      if (assetIds.length === 0) {
+        console.log('No valid asset IDs found for price fetching');
+        return;
+      }
+      
+      console.log('Calling fetchCurrentPricesUSD with assetIds:', assetIds);
+      
+      // Test if the API is reachable first
+      try {
+        const testResponse = await fetch('/api/alchemy/prices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            assetIds: ['bitcoin'], // Test with just Bitcoin
+            startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            endDate: new Date().toISOString().split('T')[0]
+          })
+        });
+        console.log('API test response status:', testResponse.status);
+        if (!testResponse.ok) {
+          const errorText = await testResponse.text();
+          console.error('API test failed:', errorText);
+        }
+      } catch (testError) {
+        console.error('API test error:', testError);
+      }
+      
+      const prices = await fetchCurrentPricesUSD(assetIds);
+      console.log('Fetched prices result:', prices);
+      console.log('Prices object keys:', Object.keys(prices));
+      console.log('Prices object values:', Object.values(prices));
+      setAssetPrices(prev => {
+        const newPrices = { ...prev, ...prices };
+        console.log('Updated asset prices state:', newPrices);
+        return newPrices;
+      });
+      
+    } catch (error) {
+      console.error("Failed to fetch asset prices:", error);
+      // Don't clear existing prices on error
+      
+      // Try to use fallback prices from Aave positions if available
+      console.log('Attempting to use fallback prices from Aave positions...');
+      const fallbackPrices: Record<string, number> = {};
+      
+      positions.forEach(position => {
+        const suppliedAmount = parseFloat(position.supplied || '0');
+        const usdValue = parseFloat(position.usdValue?.toString() || '0');
+        
+        if (suppliedAmount > 0 && usdValue > 0) {
+          const price = usdValue / suppliedAmount;
+          const assetId = mapSymbolToAssetId(position.symbol);
+          if (assetId) {
+            fallbackPrices[assetId] = price;
+            console.log(`Fallback price for ${position.symbol} (${assetId}): $${price}`);
+          }
+        }
+      });
+      
+      if (Object.keys(fallbackPrices).length > 0) {
+        console.log('Using fallback prices:', fallbackPrices);
+        setAssetPrices(prev => ({ ...prev, ...fallbackPrices }));
+      }
+    }
+  }
+
+  // Token contract addresses for Base network
+  const getTokenContractAddress = (symbol: string): string | null => {
+    const contractMap: Record<string, string> = {
+      'USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // Base USDC
+      'cbBTC': '0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22', // Base cbBTC
+      'WETH': '0x4200000000000000000000000000000000000006', // Base WETH
+      'wstETH': '0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452', // Base wstETH
+      'EURC': '0x1aBaEA1f7C830bD89Acc67eC4af5160b2FE33f0D', // Base EURC
+      'AAVE': '0x78a087d713Be963Bf307b18F2Ff8122EF9A63ae9', // Base AAVE
+      'USDT': '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb', // Base USDT
+      'LINK': '0x88DfaAABaf06f3a41D2606EA98BC8ed109109b44', // Base LINK
+    };
+    return contractMap[symbol] || null;
+  };
+
+  // Fetch token metadata from Alchemy
+  const fetchTokenMetadata = async (contractAddress: string): Promise<{ logo?: string; name?: string; symbol?: string } | null> => {
+    try {
+      const response = await fetch('/api/alchemy/token-metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contractAddress })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        return data.result || null;
+      }
+    } catch (error) {
+      console.warn('Failed to fetch token metadata:', error);
+    }
+    return null;
+  };
+
+  // Get asset image URL with Alchemy fallback
+  const getAssetImage = (symbol: string): string | null => {
+    // First try Alchemy metadata if we have a contract address
+    const contractAddress = getTokenContractAddress(symbol);
+    if (contractAddress) {
+      // For now, return the static mapping, but we could enhance this to use Alchemy metadata
+      const imageMap: Record<string, string> = {
+        'USDC': 'https://static.alchemyapi.io/images/assets/3408.png',
+        'cbBTC': 'https://static.alchemyapi.io/images/assets/1.png',
+        'WETH': 'https://static.alchemyapi.io/images/assets/1027.png',
+        'wstETH': 'https://static.alchemyapi.io/images/assets/12121.png',
+        'EURC': 'https://static.alchemyapi.io/images/assets/3408.png',
+        'AAVE': 'https://static.alchemyapi.io/images/assets/7278.png',
+        'USDT': 'https://static.alchemyapi.io/images/assets/825.png',
+        'LINK': 'https://static.alchemyapi.io/images/assets/1975.png',
+      };
+      return imageMap[symbol] || null;
+    }
+    
+    // Fallback to original mapping
+    const fallbackMap: Record<string, string> = {
+      'USDC': 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png',
+      'cbBTC': 'https://cryptologos.cc/logos/bitcoin-btc-logo.png',
+      'WETH': 'https://cryptologos.cc/logos/ethereum-eth-logo.png',
+      'wstETH': 'https://cryptologos.cc/logos/lido-staked-ether-steth-logo.png',
+      'EURC': 'https://cryptologos.cc/logos/euro-coin-eurc-logo.png',
+      'AAVE': 'https://cryptologos.cc/logos/aave-aave-logo.png',
+      'USDT': 'https://cryptologos.cc/logos/tether-usdt-logo.png',
+      'LINK': 'https://cryptologos.cc/logos/chainlink-link-logo.png',
+      'SOL': 'https://cryptologos.cc/logos/solana-sol-logo.png',
+      'DOT': 'https://cryptologos.cc/logos/polkadot-new-dot-logo.png',
+      'PEPE': 'https://cryptologos.cc/logos/pepe-pepe-logo.png',
+    };
+    return fallbackMap[symbol] || null;
+  };
+
+  // Calculate USD value for an asset
+  const getAssetUSDValue = (symbol: string, balance: string): number => {
+    const assetId = mapSymbolToAssetId(symbol);
+    let price = assetId ? assetPrices[assetId] : 0;
+    
+    // Fallback: try to get price from Aave positions if Alchemy price is not available
+    if (price === 0) {
+      const matchingPosition = positions.find(pos => pos.symbol === symbol);
+      if (matchingPosition && parseFloat(matchingPosition.supplied || '0') > 0) {
+        const positionPrice = parseFloat(matchingPosition.usdValue?.toString() || '0') / parseFloat(matchingPosition.supplied || '1');
+        if (positionPrice > 0) {
+          price = positionPrice;
+          console.log(`Using fallback price from Aave position for ${symbol}: ${price}`);
+        }
+      }
+    }
+    
+    console.log(`Getting USD value for ${symbol}:`, {
+      assetId,
+      balance,
+      hasPrice: !!assetId && !!assetPrices[assetId],
+      alchemyPrice: assetId ? assetPrices[assetId] : 0,
+      fallbackPrice: price,
+      balanceValue: parseFloat(balance)
+    });
+    
+    if (price === 0) {
+      console.log(`No price data available for ${symbol} (assetId: ${assetId})`);
+      return 0;
+    }
+    
+    const value = parseFloat(balance) * price;
+    console.log(`Calculated value for ${symbol}: ${value} (${parseFloat(balance)} * ${price})`);
+    return value;
+  };
+
+
   // Helper functions for operation output
   const addOutput = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -76,6 +288,13 @@ export default function AavePage() {
     if (!isOutputModalOpen) {
       setIsOutputModalOpen(true);
     }
+    // Auto-scroll to bottom after a brief delay to allow DOM update
+    setTimeout(() => {
+      const logContainer = document.getElementById('operation-log-container');
+      if (logContainer) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
+    }, 100);
   };
 
   const clearOutput = () => {
@@ -240,8 +459,11 @@ export default function AavePage() {
   useEffect(() => {
     if (walletAddress) {
       refreshPositions();
+      // Also directly refresh wallet balances to ensure they're loaded
+      refreshWalletBalances();
     }
   }, [walletAddress, chainId]);
+
 
   // Auto-fetch network stats when network changes
   useEffect(() => {
@@ -414,12 +636,30 @@ export default function AavePage() {
   }
 
   async function refreshWalletBalances() {
-    if (!walletAddress || !publicClient) return;
+    console.log('=== refreshWalletBalances called ===');
+    console.log('walletAddress:', walletAddress);
+    console.log('publicClient:', !!publicClient);
+    console.log('chainId:', chainId);
+    
+    if (!walletAddress || !publicClient) {
+      console.log('Missing walletAddress or publicClient, skipping wallet balance refresh');
+      return;
+    }
     
     try {
       const { getWalletBalances } = await import("@/lib/aave/viem");
+      console.log('Fetching wallet balances...');
       const balances = await getWalletBalances(publicClient, walletAddress as Address, chainId);
+      console.log('Raw wallet balances from getWalletBalances:', balances);
       setWalletBalances(balances);
+      
+      // Fetch prices for the assets
+      if (balances.length > 0) {
+        console.log('Wallet balances found, fetching prices...');
+        await fetchAssetPrices();
+      } else {
+        console.log('No wallet balances found');
+      }
     } catch (error) {
       console.error("Failed to refresh wallet balances:", error);
     }
@@ -1426,12 +1666,14 @@ export default function AavePage() {
             }
             
             const balance = await getTokenBalance(swap.toToken, walletAddress as Address, decimals);
+            console.log(`Post-swap balance check for ${symbol}: ${balance} (decimals: ${decimals})`);
             if (parseFloat(balance) > 0) {
-            assetAmounts.push({
+              assetAmounts.push({
                 symbol: symbol,
                 amount: balance,
                 usdcAmount: swap.amount
               });
+              addOutput(`  ✅ ${symbol} balance after swap: ${balance}`);
             } else {
               console.warn(`${symbol} balance is 0 after swap, this might indicate a swap issue`);
               addOutput(`  ⚠️ Warning: ${symbol} balance is 0 after swap`);
@@ -1467,6 +1709,12 @@ export default function AavePage() {
         .filter(asset => asset.symbol !== "USDC")
         .forEach(asset => consolidatedAssetAmounts.push(asset));
       
+      // Debug: Log all assets that will be supplied
+      addOutput(`📋 Assets to supply to Aave (${consolidatedAssetAmounts.length} total):`);
+      consolidatedAssetAmounts.forEach((asset, index) => {
+        addOutput(`  ${index + 1}. ${asset.amount} ${asset.symbol} (from ${asset.usdcAmount} USDC)`);
+      });
+      
       setStatusProgress(50);
       
       if (consolidatedAssetAmounts.length === 0) {
@@ -1481,10 +1729,20 @@ export default function AavePage() {
       
       // Supply each asset to Aave
       let completedAssets = 0;
+      let successfulSupplies = 0;
+      let failedSupplies: string[] = [];
+      
       for (const assetAmount of consolidatedAssetAmounts) {
+        // Debug: Log the asset being processed
+        console.log(`Processing asset for supply: ${assetAmount.symbol}, amount: ${assetAmount.amount}`);
+        console.log(`Available reserves:`, Object.keys(cfg.reserves));
+        
         const reserve = cfg.reserves[assetAmount.symbol];
         if (!reserve) {
           console.warn(`Reserve not found for ${assetAmount.symbol}, skipping...`);
+          console.warn(`Available reserves:`, Object.keys(cfg.reserves));
+          addOutput(`  ⚠️ Reserve not found for ${assetAmount.symbol}, skipping...`);
+          completedAssets++;
           continue;
         }
 
@@ -1492,6 +1750,7 @@ export default function AavePage() {
         if (parseFloat(assetAmount.amount) === 0) {
           console.warn(`Skipping ${assetAmount.symbol} with 0 balance`);
           addOutput(`  ⚠️ Skipping ${assetAmount.symbol} (0 balance)`);
+          completedAssets++;
           continue;
         }
 
@@ -1519,33 +1778,35 @@ export default function AavePage() {
         try {
           addOutput(`    🔄 Checking balance and preparing approval...`);
         
-        // Approve and supply the asset
-        await checkAndApproveErc20(
-          pub, 
-          walletClient, 
-          reserve.underlying as Address, 
-          cfg.pool as Address, 
-          assetAmount.amount, 
-          decimals
-        );
-          
+          // Approve and supply the asset
+          await checkAndApproveErc20(
+            pub, 
+            walletClient, 
+            reserve.underlying as Address, 
+            cfg.pool as Address, 
+            assetAmount.amount, 
+            decimals
+          );
+            
           addOutput(`    🔄 Approval confirmed, executing supply transaction...`);
         
-        await supplyToAave(
-          pub, 
-          walletClient, 
-          cfg.pool as Address, 
-          reserve.underlying as Address, 
-          assetAmount.amount, 
-          decimals
-        );
+          await supplyToAave(
+            pub, 
+            walletClient, 
+            cfg.pool as Address, 
+            reserve.underlying as Address, 
+            assetAmount.amount, 
+            decimals
+          );
         
           addOutput(` ✅ Successfully supplied ${assetAmount.amount} ${assetAmount.symbol} to Aave`);
+          successfulSupplies++;
           
         } catch (error) {
           console.error(`Failed to supply ${assetAmount.symbol}:`, error);
           addOutput(` ❌ Failed to supply ${assetAmount.symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          throw new Error(`Failed to supply ${assetAmount.amount} ${assetAmount.symbol} to Aave: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          failedSupplies.push(`${assetAmount.symbol}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          // Continue with next asset instead of throwing
         }
         
         setStatusProgress(55 + (completedAssets / consolidatedAssetAmounts.length) * 40);
@@ -1556,6 +1817,14 @@ export default function AavePage() {
           addOutput(`    ⏳ Waiting 2 seconds before next supply...`);
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
+      }
+      
+      // Check if we had any successful supplies
+      if (successfulSupplies === 0) {
+        throw new Error(`Failed to supply any assets to Aave. Errors: ${failedSupplies.join(', ')}`);
+      } else if (failedSupplies.length > 0) {
+        addOutput(`⚠️ Some assets failed to supply: ${failedSupplies.join(', ')}`);
+        addOutput(`✅ Successfully supplied ${successfulSupplies} assets to Aave`);
       }
       
       setStatusProgress(95);
@@ -1570,12 +1839,15 @@ export default function AavePage() {
       }
       
       addOutput("");
-      addOutput("✅ All steps completed successfully:");
+      addOutput("✅ Deployment Summary:");
       addOutput("  1. ✅ ParaSwap API connectivity verified");
       addOutput("  2. ✅ USDC swapped to portfolio assets");
-      addOutput("  3. ✅ Assets supplied to Aave protocol");
+      addOutput(`  3. ✅ ${successfulSupplies} assets supplied to Aave protocol`);
+      if (failedSupplies.length > 0) {
+        addOutput(`  4. ⚠️ ${failedSupplies.length} assets failed to supply (check wallet for remaining tokens)`);
+      }
       addOutput("");
-      addOutput("💡 Your assets are now earning interest on Aave!");
+      addOutput("💡 Your supplied assets are now earning interest on Aave!");
       
       setStatusType("success");
       setStatusProgress(100);
@@ -1619,7 +1891,7 @@ export default function AavePage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">DeBank - Aave Integration</h1>
+            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">SagaFi - Aave Integration</h1>
             <p className="text-[rgb(var(--fg-secondary))]">Lend, borrow, and manage your DeFi positions</p>
           </div>
           <div className="flex items-center gap-3">
@@ -1662,58 +1934,179 @@ export default function AavePage() {
 
       {/* Tabs */}
       <div className="card">
-        <div className="flex border-b border-[rgb(var(--border-primary))] mb-6">
+        <div className="flex border-b border-[rgb(var(--border-primary))] mb-6 overflow-x-auto">
           <button
             onClick={() => setActiveTab("positions")}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${
               activeTab === "positions"
                 ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
                 : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
             }`}
           >
-            <IconWallet size={16} className="inline mr-2" />
-            My Positions
+            <IconWallet size={14} className="inline mr-1 sm:mr-2" />
+            <span className="hidden sm:inline">My Positions</span>
+            <span className="sm:hidden">Positions</span>
           </button>
           <button
             onClick={() => setActiveTab("deploy")}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${
               activeTab === "deploy"
                 ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
                 : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
             }`}
           >
-            <IconBuildingBank size={16} className="inline mr-2" />
-            Deploy Strategy
-          </button>
-          <button
-            onClick={() => setActiveTab("supply")}
-            className={`px-4 py-2 font-medium transition-colors ${
-              activeTab === "supply"
-                ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
-                : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
-            }`}
-          >
-            Supply Assets
+            <IconBuildingBank size={14} className="inline mr-1 sm:mr-2" />
+            <span className="hidden sm:inline">Deploy Strategy</span>
+            <span className="sm:hidden">Deploy</span>
           </button>
           <button
             onClick={() => setActiveTab("rebalance")}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-3 sm:px-4 py-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${
               activeTab === "rebalance"
                 ? "text-[rgb(var(--accent-primary))] border-b-2 border-[rgb(var(--accent-primary))]"
                 : "text-[rgb(var(--fg-secondary))] hover:text-[rgb(var(--fg-primary))]"
             }`}
           >
-            Rebalance Portfolio
+            <IconArrowsExchange size={14} className="inline mr-1 sm:mr-2" />
+            <span className="hidden sm:inline">Rebalance Portfolio</span>
+            <span className="sm:hidden">Rebalance</span>
           </button>
         </div>
 
         {/* Positions Tab */}
         {activeTab === "positions" && (
           <div className="space-y-6">
+            {/* In-Wallet Available Assets Section */}
+            {walletAddress && (
+              <div className="card">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">In-Wallet Available Assets</h3>
+                    {walletBalances.length > 0 && (
+                      <div className="text-sm text-[rgb(var(--fg-secondary))] mt-1">
+                        Total Value: <span className="font-semibold text-green-600">
+                          ${walletBalances.reduce((total, asset) => total + getAssetUSDValue(asset.symbol, asset.balance), 0).toFixed(2)} USD
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={refreshWalletBalances}
+                      disabled={loading}
+                      className="btn btn-sm btn-secondary"
+                      title="Refresh wallet balances"
+                    >
+                      <IconRefresh size={14} />
+                    </button>
+                    {walletBalances.length > 0 && (
+                      <>
+                        <button
+                          onClick={swapAllAssetsToUSDC}
+                          disabled={loading}
+                          className="btn btn-sm btn-secondary"
+                          title="Swap all available assets to USDC"
+                        >
+                          <IconArrowsExchange size={14} className="mr-1" />
+                          Swap All to USDC
+                        </button>
+                        <button
+                          onClick={supplyAllAvailableAssets}
+                          disabled={loading}
+                          className="btn btn-sm btn-primary"
+                          title="Supply all available assets to Aave"
+                        >
+                          <IconPlus size={14} className="mr-1" />
+                          Supply All
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                
+                {walletBalances.length > 0 ? (
+                  <div className="space-y-3">
+                    {walletBalances.map((asset, index) => {
+                      const assetImage = getAssetImage(asset.symbol);
+                      const usdValue = getAssetUSDValue(asset.symbol, asset.balance);
+                      const assetId = mapSymbolToAssetId(asset.symbol);
+                      const currentPrice = assetId ? assetPrices[assetId] : null;
+                      
+                      return (
+                        <div key={index} className="flex items-center justify-between p-3 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))]">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full flex items-center justify-center overflow-hidden">
+                              {assetImage ? (
+                                <img 
+                                  src={assetImage} 
+                                  alt={asset.symbol}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    // Fallback to colored circle if image fails to load
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    const parent = target.parentElement;
+                                    if (parent) {
+                                      parent.innerHTML = `<div class="w-full h-full bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center"><span class="text-xs font-bold text-white">${asset.symbol.charAt(0)}</span></div>`;
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center">
+                                  <span className="text-xs font-bold text-white">
+                                    {asset.symbol.charAt(0)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-medium text-[rgb(var(--fg-primary))]">{asset.symbol}</div>
+                              <div className="text-sm text-[rgb(var(--fg-secondary))]">
+                                Balance: {parseFloat(asset.balance).toFixed(6)} {asset.symbol}
+                              </div>
+                              {currentPrice && (
+                                <div className="text-xs text-[rgb(var(--fg-tertiary))]">
+                                  ${currentPrice.toFixed(2)} per {asset.symbol}
+                                </div>
+                              )}
+                              {usdValue > 0 && (
+                                <div className="text-sm font-semibold text-green-600">
+                                  ${usdValue.toFixed(2)} USD
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedAsset(asset.symbol);
+                              setSupplyAmount(asset.balance);
+                            }}
+                            disabled={loading}
+                            className="btn btn-sm btn-primary"
+                            title={`Supply ${asset.balance} ${asset.symbol} to Aave`}
+                          >
+                            <IconPlus size={12} className="mr-1" />
+                            Supply
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
+                    <IconWallet size={32} className="mx-auto mb-2 opacity-50" />
+                    <p>No supported assets found in your wallet</p>
+                    <p className="text-xs mt-1">Make sure you have USDC, cbBTC, WETH, wstETH, EURC, or AAVE tokens</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+
             <div className="card">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
                 <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Your Aave Positions</h3>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                   {(() => {
                     // Debug logging for emergency withdraw button
                     const positionsWithSupply = positions.filter(pos => parseFloat(pos.supplied) > 0);
@@ -1729,7 +2122,8 @@ export default function AavePage() {
                       title="Emergency Withdraw: Withdraw all supplied assets from Aave"
                     >
                       <IconMinus size={14} />
-                      Emergency Withdraw
+                      <span className="hidden sm:inline">Emergency Withdraw</span>
+                      <span className="sm:hidden">Withdraw All</span>
                       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
                         Withdraw all supplied assets from Aave
                         <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
@@ -1959,17 +2353,17 @@ export default function AavePage() {
         {/* Deploy Tab */}
         {activeTab === "deploy" && (
           <div className="card">
-            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Deploy Backtest Strategy</h3>
+            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Deploy Strategy</h3>
             <p className="text-sm text-[rgb(var(--fg-secondary))] mb-4">
               Deploy your saved portfolio strategy to Aave for real DeFi exposure
             </p>
             
             <div className="mb-6 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
               <h4 className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-2">Asset Mapping</h4>
-              <div className="text-xs text-yellow-700 dark:text-yellow-300">
-                <div>• Bitcoin (BTC) → cbBTC (Coinbase Bitcoin) on Base</div>
-                <div>• Ethereum (ETH) → WETH (Wrapped Ethereum) on Base</div>
-                <div>• Other assets map directly to their wrapped versions</div>
+              <div className="text-xs text-yellow-700 dark:text-yellow-300 space-y-1">
+                <div>• Bitcoin → cbBTC (Coinbase Bitcoin)</div>
+                <div>• Ethereum → WETH (Wrapped Ethereum)</div>
+                <div>• Other assets map to their wrapped versions</div>
               </div>
             </div>
             
@@ -2043,7 +2437,8 @@ export default function AavePage() {
                     className="btn btn-primary w-full"
                   >
                     <IconPlus size={16} />
-                    Deploy Strategy
+                    <span className="hidden sm:inline">Deploy Strategy</span>
+                    <span className="sm:hidden">Deploy</span>
                   </button>
                 </div>
               )}
@@ -2052,146 +2447,6 @@ export default function AavePage() {
           </div>
         )}
 
-        {/* Supply Tab */}
-        {activeTab === "supply" && (
-          <div className="card">
-            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Supply Assets</h3>
-            <p className="text-sm text-[rgb(var(--fg-secondary))] mb-4">
-              Supply assets to Aave to earn interest and use as collateral. You&apos;ll receive aTokens (e.g., aUSDC) that represent your supplied assets.
-            </p>
-            
-            <div className="mb-6 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-              <h4 className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">Supported Assets on Base</h4>
-              <div className="text-xs text-blue-700 dark:text-blue-300">
-                <div>• USDC → aBasUSDC (USD Coin)</div>
-                <div>• cbBTC → aBascbBTC (Coinbase Bitcoin)</div>
-                <div>• WETH → aBasWETH (Wrapped Ethereum)</div>
-                <div>• wstETH → aBaswstETH (Wrapped Staked Ethereum)</div>
-                <div>• EURC → aBasEURC (Euro Coin)</div>
-                <div>• AAVE → aBasAAVE (Aave Token)</div>
-              </div>
-            </div>
-
-            {/* In-Wallet Available Assets */}
-            {walletAddress && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h4 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">In-Wallet Available Assets</h4>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={refreshWalletBalances}
-                      disabled={loading}
-                      className="btn btn-sm btn-secondary"
-                      title="Refresh wallet balances"
-                    >
-                      <IconRefresh size={14} />
-                    </button>
-                    {walletBalances.length > 0 && (
-                      <>
-                        <button
-                          onClick={swapAllAssetsToUSDC}
-                          disabled={loading}
-                          className="btn btn-sm btn-secondary"
-                          title="Swap all available assets to USDC"
-                        >
-                          <IconArrowsExchange size={14} className="mr-1" />
-                          Swap All to USDC
-                        </button>
-                        <button
-                          onClick={supplyAllAvailableAssets}
-                          disabled={loading}
-                          className="btn btn-sm btn-primary"
-                          title="Supply all available assets to Aave"
-                        >
-                          <IconPlus size={14} className="mr-1" />
-                          Supply All
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                
-                {walletBalances.length > 0 ? (
-                  <div className="space-y-3">
-                    {walletBalances.map((asset, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))]">
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center">
-                            <span className="text-xs font-bold text-white">
-                              {asset.symbol.charAt(0)}
-                            </span>
-                          </div>
-                          <div>
-                            <div className="font-medium text-[rgb(var(--fg-primary))]">{asset.symbol}</div>
-                            <div className="text-sm text-[rgb(var(--fg-secondary))]">
-                              Balance: {parseFloat(asset.balance).toFixed(6)} {asset.symbol}
-                            </div>
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setSelectedAsset(asset.symbol);
-                            setSupplyAmount(asset.balance);
-                          }}
-                          disabled={loading}
-                          className="btn btn-sm btn-primary"
-                          title={`Supply ${asset.balance} ${asset.symbol} to Aave`}
-                        >
-                          <IconPlus size={12} className="mr-1" />
-                          Supply
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-[rgb(var(--fg-secondary))]">
-                    <IconWallet size={32} className="mx-auto mb-2 opacity-50" />
-                    <p>No supported assets found in your wallet</p>
-                    <p className="text-xs mt-1">Make sure you have USDC, cbBTC, WETH, wstETH, EURC, or AAVE tokens</p>
-                  </div>
-                )}
-              </div>
-            )}
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Asset</label>
-                <select
-                  value={selectedAsset}
-                  onChange={(e) => setSelectedAsset(e.target.value)}
-                  className="input w-full"
-                >
-                  <option value="">Select asset to supply</option>
-                  {Object.keys(cfg?.reserves || {}).map((sym) => (
-                    <option key={sym} value={sym}>{sym}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[rgb(var(--fg-secondary))] mb-2">Amount</label>
-                <input
-                  type="number"
-                  value={supplyAmount}
-                  onChange={(e) => setSupplyAmount(e.target.value)}
-                  placeholder="0.00"
-                  min={0}
-                  step="0.000001"
-                  className="input w-full"
-                />
-              </div>
-            </div>
-            
-            <button 
-              onClick={supplyAsset}
-              disabled={!selectedAsset || !supplyAmount || loading}
-              className="btn btn-primary w-full"
-            >
-              <IconPlus size={16} />
-              Supply Asset
-            </button>
-            
-          </div>
-        )}
 
         {/* Rebalance Tab */}
         {activeTab === "rebalance" && (
@@ -2353,7 +2608,8 @@ export default function AavePage() {
                 onClick={deployWithAvailableCapital}
                 className="btn btn-primary flex-1"
               >
-                Deploy with Available Capital
+                <span className="hidden sm:inline">Deploy with Available Capital</span>
+                <span className="sm:hidden">Deploy</span>
               </button>
             </div>
           </div>
@@ -2365,8 +2621,8 @@ export default function AavePage() {
         <div className={`fixed z-50 transition-all duration-300 ${
           isOutputModalMinimized ? 'bottom-4 right-4' : 'bottom-4 right-4 top-4'
         }`}>
-          <div className={`bg-[rgb(var(--bg-primary))] border border-[rgb(var(--border-primary))] rounded-lg shadow-2xl transition-all duration-300 ${
-            isOutputModalMinimized ? 'w-80 h-12' : 'w-96 max-h-[calc(100vh-2rem)]'
+          <div className={`bg-[rgb(var(--bg-primary))] border border-[rgb(var(--border-primary))] rounded-xl shadow-2xl transition-all duration-300 ${
+            isOutputModalMinimized ? 'w-72 sm:w-80 h-12' : 'w-80 sm:w-96 h-[70vh] max-h-[600px]'
           }`}>
             {/* Modal Header */}
             <div className={`flex items-center justify-between border-b border-[rgb(var(--border-primary))] transition-all duration-300 ${
@@ -2386,7 +2642,9 @@ export default function AavePage() {
                 
                 <h4 className={`font-semibold text-[rgb(var(--fg-primary))] transition-all duration-300 ${
                   isOutputModalMinimized ? 'text-xs' : 'text-sm'
-                }`}>Operation Output</h4>
+                }`}>
+                  {isOutputModalMinimized ? 'Ops' : 'Operations'}
+                </h4>
                 
                 {/* Status Badge */}
                 {status && (
@@ -2516,15 +2774,18 @@ export default function AavePage() {
                 )}
                 
                 {/* Output Log */}
-                <div className="flex-1 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] p-3 overflow-y-auto min-h-0">
+                <div 
+                  id="operation-log-container"
+                  className="flex-1 bg-[rgb(var(--bg-secondary))] rounded-lg border border-[rgb(var(--border-primary))] p-3 overflow-y-auto min-h-0 scroll-smooth"
+                >
                   <div className="space-y-1">
                     {operationOutput.length === 0 ? (
                       <div className="text-xs text-[rgb(var(--fg-secondary))] text-center py-4">
-                        No operation output yet
+                        No operations yet
                       </div>
                     ) : (
                       operationOutput.map((line, index) => (
-                        <div key={index} className="text-xs font-mono text-[rgb(var(--fg-secondary))] leading-relaxed break-words">
+                        <div key={index} className="text-xs font-mono text-[rgb(var(--fg-secondary))] leading-relaxed break-words hover:bg-[rgb(var(--bg-primary))] px-2 py-1 rounded transition-colors">
                           {line}
                         </div>
                       ))

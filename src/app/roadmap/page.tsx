@@ -72,7 +72,7 @@ export default function RoadmapPage() {
       subtitle: "DeFi-Powered Neobank",
       status: "vision",
       icon: IconCreditCard,
-      description: "DeBank Credit Card issued to KYCed users",
+      description: "SagaFi Credit Card issued to KYCed users",
       features: [
         "Users spend in native fiat → monthly bill in USDC",
         "Settlement via USDC holdings or DeFi borrowing",
@@ -141,7 +141,7 @@ export default function RoadmapPage() {
     <div className="space-y-12">
       {/* Hero Section */}
       <section className="hero text-center">
-        <h1 className="hero-title">DeBank Roadmap</h1>
+        <h1 className="hero-title">SagaFi Roadmap</h1>
         <p className="hero-subtitle max-w-3xl mx-auto">
           From Aave Base Markets to Multi-Chain Portfolio Management — and Beyond
         </p>
@@ -157,7 +157,7 @@ export default function RoadmapPage() {
         <h2 className="text-3xl font-bold text-[rgb(var(--fg-primary))] text-center">Project Overview</h2>
         <div className="card max-w-4xl mx-auto">
           <p className="text-lg text-[rgb(var(--fg-secondary))] leading-relaxed">
-            DeBank is a non-custodial platform for testing and managing DeFi portfolios. 
+            SagaFi is a non-custodial platform for testing and managing DeFi portfolios. 
             Our MVP focuses on Aave Base markets with a roadmap to 
             expand across multiple chains and eventually integrate real-world credit.
           </p>
@@ -326,7 +326,7 @@ export default function RoadmapPage() {
               <IconCreditCard size={24} className="text-white" />
             </div>
             <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-2">Everyday Users</h3>
-            <p className="text-sm text-[rgb(var(--fg-secondary))]">Credit cards linked to DeFi yield (Phase 5)</p>
+            <p className="text-sm text-[rgb(var(--fg-secondary))]">SagaFi credit cards linked to DeFi yield (Phase 5)</p>
           </div>
         </div>
       </section>

@@ -403,7 +403,7 @@ export default function BacktestPage() {
     <div className="space-y-8">
       {/* Hero Section */}
       <section className="hero">
-        <h1 className="hero-title">DeBank - Portfolio Backtesting</h1>
+        <h1 className="hero-title">SagaFi - Portfolio Backtesting</h1>
         <p className="hero-subtitle">
           Test your crypto investment strategies with historical data. Analyze performance, 
           optimize allocations, and make data-driven decisions for Aave Base markets.

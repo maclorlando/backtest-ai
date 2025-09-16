@@ -11,7 +11,7 @@ const navItems = [
     href: "/",
     label: "Home",
     icon: IconHome,
-    description: "DeBank landing page"
+    description: "SagaFi landing page"
   },
   {
     href: "/backtest",
@@ -73,7 +73,7 @@ export default function Navigation() {
             <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-[rgb(var(--accent-primary))] to-[rgb(var(--accent-secondary))] rounded-lg flex items-center justify-center">
               <IconChartLine size={16} className="text-white sm:w-5 sm:h-5" />
             </div>
-            <span className="text-lg sm:text-xl font-bold text-[rgb(var(--fg-primary))]">DeBank</span>
+            <span className="text-lg sm:text-xl font-bold text-[rgb(var(--fg-primary))]">SagaFi</span>
           </Link>
 
           {/* Desktop Navigation */}

@@ -1,17 +1,17 @@
-# DeBank (DeFi Bank)
+# SagaFi
 
 **"From Aave Base Markets to Multi-Chain Portfolio Management — and Beyond"**
 
-DeBank is a non-custodial platform for testing and managing DeFi portfolios. Our MVP focuses on Aave Base markets with a roadmap to expand across multiple chains and eventually integrate real-world credit.
+SagaFi is a non-custodial platform for testing and managing DeFi portfolios. Our MVP focuses on Aave Base markets with a roadmap to expand across multiple chains and eventually integrate real-world credit.
 
 ## 🎯 Project Overview
 
-DeBank provides a layered platform that starts with Aave Base markets and expands outward:
+SagaFi provides a layered platform that starts with Aave Base markets and expands outward:
 
 - **Analytics Layer**: Backtesting historical strategies and forward-testing with asset price assumptions
 - **Execution Layer**: One-click Aave Base market portfolio deployment with smart contract batching
 - **Vault Layer**: ERC-4626 compliant Aave Meta Vaults (future)
-- **Lifestyle Layer**: Credit card linked to DeBank for real-world spending (future)
+- **Lifestyle Layer**: Credit card linked to SagaFi for real-world spending (future)
 
 ## 🚀 Current Features (MVP)
 
@@ -73,7 +73,7 @@ See [ALCHEMY_SETUP.md](./ALCHEMY_SETUP.md) for detailed setup instructions.
 
 ## 🔑 API Configuration
 
-DeBank uses Alchemy API for price data. To enable enhanced features and higher rate limits:
+SagaFi uses Alchemy API for price data. To enable enhanced features and higher rate limits:
 
 1. Get a free API key from [Alchemy](https://www.alchemy.com/)
 2. Add the API key to your `.env.local` file as `ALCHEMY_API_KEY` (backend only)

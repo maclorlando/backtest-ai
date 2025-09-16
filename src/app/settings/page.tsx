@@ -67,7 +67,7 @@ export default function SettingsPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">DeBank Settings</h1>
+            <h1 className="text-2xl font-bold text-[rgb(var(--fg-primary))]">SagaFi Settings</h1>
             <p className="text-[rgb(var(--fg-secondary))]">Configure your preferences and API settings</p>
           </div>
           <button 
