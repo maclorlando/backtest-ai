@@ -98,11 +98,23 @@ export default async function RootLayout({
 						/>
 						<GlobalModalProvider>
 							<ThemeWrapper>
-								<div className="min-h-screen bg-[rgb(var(--bg-primary))]">
-									<Navigation />
-									<main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6 max-w-7xl">
-										{children}
-									</main>
+								<div className="min-h-screen relative">
+									{/* Blur Background Effect */}
+									<div className="blur-background">
+										<div className="blur-orb"></div>
+										<div className="blur-orb"></div>
+										<div className="blur-orb"></div>
+										<div className="blur-orb"></div>
+										<div className="blur-orb"></div>
+										<div className="blur-orb"></div>
+									</div>
+									{/* Main content with semi-transparent background */}
+									<div className="relative z-10 min-h-screen" style={{ backgroundColor: 'rgba(var(--bg-primary), 0.95)' }}>
+										<Navigation />
+										<main className="container mx-auto px-2 sm:px-4 py-3 sm:py-6 max-w-7xl">
+											{children}
+										</main>
+									</div>
 								</div>
 							</ThemeWrapper>
 						</GlobalModalProvider>

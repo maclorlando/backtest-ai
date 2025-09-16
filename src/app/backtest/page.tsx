@@ -4,6 +4,7 @@ import { format, subYears, differenceInCalendarDays } from "date-fns";
 import Image from "next/image";
 import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
 import { fetchCoinLogos, fetchCurrentPricesUSD, checkPriceDataAvailability, fetchPricesForBacktest, resetRateLimitState } from "@/lib/prices";
+import { dataService } from "@/lib/dataService";
 import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
 import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import { getCoinGeckoApiKey } from "@/lib/utils/apiKey";
@@ -83,12 +84,12 @@ export default function BacktestPage() {
   const [comparisonLines, setComparisonLines] = useState<
     { key: string; name: string; color: string; kpis: { cagrPct: number; volPct: number; maxDdPct: number; rr: number | null } }[]
   >([]);
+  const [cacheStats, setCacheStats] = useState<{ valid: number; expired: number; total: number } | null>(null);
 
-  // Load logos only when needed (lazy loading)
+  // Load logos using centralized data service
   const loadLogosForAssets = async (assetIds: AssetId[]) => {
-    const key = getCoinGeckoApiKey();
     try {
-      const logos = await fetchCoinLogos(assetIds, key);
+      const logos = await dataService.getTokenLogos(assetIds);
       setLogos(prev => ({ ...prev, ...logos }));
     } catch (error) {
       console.warn('Failed to load logos:', error);
@@ -136,11 +137,32 @@ export default function BacktestPage() {
     }
   }, []);
 
-  // Load current prices only when needed (lazy loading)
+  // Preload common assets data on page load
+  useEffect(() => {
+    if (mounted) {
+      console.log('Preloading common assets data...');
+      dataService.preloadCommonAssets().catch(error => {
+        console.warn('Failed to preload common assets:', error);
+      });
+      
+      // Update cache stats
+      setCacheStats(dataService.getCacheStats());
+    }
+  }, [mounted]);
+
+  // Update cache stats periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCacheStats(dataService.getCacheStats());
+    }, 10000); // Update every 10 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Load current prices using centralized data service
   const loadCurrentPrices = async (assetIds: AssetId[]) => {
-    const key = getCoinGeckoApiKey();
     try {
-      const prices = await fetchCurrentPricesUSD(assetIds, key);
+      const prices = await dataService.getCurrentPrices(assetIds);
       setSpot(prev => ({ ...prev, ...prices }));
     } catch (error) {
       console.warn('Failed to load current prices:', error);
@@ -225,17 +247,15 @@ export default function BacktestPage() {
       console.log(`Starting backtest for assets: ${assetIds.join(', ')}`);
       console.log(`Portfolio allocations:`, allocations);
       
-      // Start all data fetching in parallel for maximum speed
-      const [prices] = await Promise.all([
-        // Fetch historical prices with progress tracking
-        fetchPricesForBacktest(assetIds, start, end, cgKey, (assetId, progress) => {
-          setCurrentAsset(assetId);
-          setFetchProgress(progress);
-        }),
-        // Load logos and current prices in background (non-blocking)
-        loadLogosForAssets(assetIds).catch(() => {}),
-        loadCurrentPrices(assetIds).catch(() => {})
-      ]);
+      // Fetch historical prices with progress tracking
+      const prices = await fetchPricesForBacktest(assetIds, start, end, cgKey, (assetId, progress) => {
+        setCurrentAsset(assetId);
+        setFetchProgress(progress);
+      });
+      
+      // Load logos and current prices in background (non-blocking) - these are now cached
+      loadLogosForAssets(assetIds).catch(() => {});
+      loadCurrentPrices(assetIds).catch(() => {});
       
       setFetchingPrices(false);
       setFetchProgress(100);
@@ -428,6 +448,12 @@ export default function BacktestPage() {
           <div className="stat-value">{Object.keys(saved).length}</div>
           <div className="stat-label">Saved Portfolios</div>
         </div>
+        {cacheStats && (
+          <div className="stat-card">
+            <div className="stat-value">{cacheStats.valid}</div>
+            <div className="stat-label">Cached Items</div>
+          </div>
+        )}
       </section>
 
       {/* Main Widgets */}
