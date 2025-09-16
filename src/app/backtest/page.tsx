@@ -14,6 +14,7 @@ import LoadingOverlay from "@/components/LoadingOverlay";
 import PortfolioBuilder from "@/components/widgets/PortfolioBuilder";
 import DateRangeWidget from "@/components/widgets/DateRangeWidget";
 import RebalancingWidget from "@/components/widgets/RebalancingWidget";
+import DCAWidget from "@/components/widgets/DCAWidget";
 import SavedPortfoliosWidget from "@/components/widgets/SavedPortfoliosWidget";
 
 type AllocationRow = { id: AssetId; allocation: number };
@@ -28,6 +29,9 @@ export default function BacktestPage() {
   const [mode, setMode] = useState<"none" | "periodic" | "threshold">("none");
   const [periodDays, setPeriodDays] = useState(30);
   const [thresholdPct, setThresholdPct] = useState(5);
+  const [dcaEnabled, setDcaEnabled] = useState(false);
+  const [dcaCapital, setDcaCapital] = useState(100);
+  const [dcaPeriodicity, setDcaPeriodicity] = useState<"daily" | "weekly" | "monthly" | "yearly">("monthly");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [priceDataAvailable, setPriceDataAvailable] = useState<boolean | null>(null);
@@ -53,6 +57,11 @@ export default function BacktestPage() {
       volatilityPct: number;
       maxDrawdownPct: number;
       sharpe: number | null;
+      // DCA-specific metrics
+      totalInvested?: number;
+      dcaContributions?: number;
+      capitalGrowth?: number;
+      capitalGrowthPct?: number;
     };
     risk?: { perAssetVolatilityPct: Record<string, number>; riskReward: number | null };
     integrity?: { score: number; issues: string[] };
@@ -65,6 +74,7 @@ export default function BacktestPage() {
     allocations: AllocationRow[];
     start: string; end: string; mode: typeof mode;
     periodDays?: number; thresholdPct?: number; initialCapital: number;
+    dcaEnabled?: boolean; dcaCapital?: number; dcaPeriodicity?: typeof dcaPeriodicity;
     kpis?: {
       finalValue: number;
       retPct: number;
@@ -221,6 +231,7 @@ export default function BacktestPage() {
     const record: SavedRecord = {
       allocations: [...allocations],
       start, end, mode, periodDays, thresholdPct, initialCapital,
+      dcaEnabled, dcaCapital, dcaPeriodicity,
       kpis,
     };
     const next = { ...saved, [name]: record };
@@ -274,6 +285,11 @@ export default function BacktestPage() {
             thresholdPct: mode === "threshold" ? thresholdPct : undefined,
           },
           initialCapital,
+          dca: dcaEnabled ? {
+            enabled: dcaEnabled,
+            amount: dcaCapital,
+            periodicity: dcaPeriodicity,
+          } : undefined,
           prices, // Pass the fetched prices directly
         }),
       });
@@ -319,6 +335,24 @@ export default function BacktestPage() {
       
       // Normalize to a common timeline using API responses
       const responses: { name: string; res: BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } }[] = [];
+      
+      // Get all unique assets across all portfolios
+      const allAssets = Array.from(new Set(entries.flatMap(([_, cfg]) => cfg.allocations.map(a => a.id))));
+      
+      // Get common date range (use the earliest start and latest end)
+      const allStarts = entries.map(([_, cfg]) => new Date(cfg.start));
+      const allEnds = entries.map(([_, cfg]) => new Date(cfg.end));
+      const commonStart = new Date(Math.min(...allStarts.map(d => d.getTime())));
+      const commonEnd = new Date(Math.max(...allEnds.map(d => d.getTime())));
+      const commonStartStr = commonStart.toISOString().split('T')[0];
+      const commonEndStr = commonEnd.toISOString().split('T')[0];
+      
+      console.log(`Comparing ${entries.length} portfolios with common date range: ${commonStartStr} to ${commonEndStr}`);
+      
+      // Fetch price data once for all assets
+      const cgKey = getCoinGeckoApiKey();
+      const prices = await fetchPricesForBacktest(allAssets, commonStartStr, commonEndStr, cgKey);
+      
       for (const [name, cfg] of entries) {
         const body: BacktestRequest = {
           assets: cfg.allocations,
@@ -326,9 +360,20 @@ export default function BacktestPage() {
           endDate: cfg.end,
           rebalance: { mode: cfg.mode, periodDays: cfg.periodDays, thresholdPct: cfg.thresholdPct },
           initialCapital: cfg.initialCapital,
+          dca: cfg.dcaEnabled ? {
+            enabled: cfg.dcaEnabled,
+            amount: cfg.dcaCapital ?? 0,
+            periodicity: cfg.dcaPeriodicity ?? "monthly",
+          } : undefined,
+          prices, // Include the fetched prices
         };
-        const cgKey = getCoinGeckoApiKey();
-        const r = await fetch("/api/backtest", { method: "POST", headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) }, body: JSON.stringify(body) });
+        
+        const r = await fetch("/api/backtest", { 
+          method: "POST", 
+          headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) }, 
+          body: JSON.stringify(body) 
+        });
+        
         const data = (await r.json()) as (BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } }) | { error?: string };
         if (!r.ok) throw new Error((data as { error?: string })?.error || "Request failed");
         responses.push({ name, res: data as BacktestResponse & { series: { portfolio: { date: string; value: number }[] } ; metrics: { cagrPct: number; volatilityPct: number; maxDrawdownPct: number }; risk?: { riskReward?: number | null } } });
@@ -411,6 +456,9 @@ export default function BacktestPage() {
     setPeriodDays(cfg.periodDays ?? 30);
     setThresholdPct(cfg.thresholdPct ?? 5);
     setInitialCapital(cfg.initialCapital ?? 100);
+    setDcaEnabled(cfg.dcaEnabled ?? false);
+    setDcaCapital(cfg.dcaCapital ?? 100);
+    setDcaPeriodicity(cfg.dcaPeriodicity ?? "monthly");
     showSuccessNotification("Portfolio Loaded", `Loaded portfolio configuration`);
   };
 
@@ -497,6 +545,17 @@ export default function BacktestPage() {
           loading={loading}
           error={error}
           allocationSum={allocationSum}
+        />
+
+        <DCAWidget
+          enabled={dcaEnabled}
+          setEnabled={setDcaEnabled}
+          capital={dcaCapital}
+          setCapital={setDcaCapital}
+          periodicity={dcaPeriodicity}
+          setPeriodicity={setDcaPeriodicity}
+          loading={loading}
+          error={error}
         />
       </section>
 
@@ -668,6 +727,32 @@ export default function BacktestPage() {
               <div className="stat-value">{(differenceInCalendarDays(new Date(result.metrics.endDate), new Date(result.metrics.startDate)) / 365).toFixed(1)}y</div>
               <div className="stat-label">{result.metrics.startDate} → {result.metrics.endDate}</div>
             </div>
+            
+            {/* DCA-specific metrics */}
+            {result.metrics.totalInvested && (
+              <>
+                <div className="stat-card">
+                  <div className="stat-value">${result.metrics.totalInvested.toFixed(2)}</div>
+                  <div className="stat-label">Total Invested</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">${result.metrics.dcaContributions?.toFixed(2) ?? 0}</div>
+                  <div className="stat-label">DCA Contributions</div>
+                </div>
+                <div className="stat-card">
+                  <div className={`stat-value ${(result.metrics.capitalGrowth ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    ${result.metrics.capitalGrowth?.toFixed(2) ?? 0}
+                  </div>
+                  <div className="stat-label">Capital Growth</div>
+                </div>
+                <div className="stat-card">
+                  <div className={`stat-value ${(result.metrics.capitalGrowthPct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {(result.metrics.capitalGrowthPct ?? 0) >= 0 ? "+" : ""}{(result.metrics.capitalGrowthPct ?? 0).toFixed(2)}%
+                  </div>
+                  <div className="stat-label">Growth %</div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Portfolio Chart */}
@@ -727,6 +812,37 @@ export default function BacktestPage() {
                 </div>
               )}
             </div>
+            
+            {/* DCA Strategy Breakdown */}
+            {result.metrics.totalInvested && (
+              <div className="card">
+                <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">DCA Strategy Breakdown</h3>
+                <div className="space-y-3">
+                  <div className="p-3 bg-blue-900/20 border border-blue-700 rounded-lg">
+                    <div className="text-sm font-semibold text-blue-300 mb-2">Investment Summary</div>
+                    <div className="text-xs text-blue-200 space-y-1">
+                      <div>• Initial Capital: ${result.metrics.initialCapital.toFixed(2)}</div>
+                      <div>• DCA Contributions: ${result.metrics.dcaContributions?.toFixed(2) ?? 0}</div>
+                      <div>• Total Invested: ${result.metrics.totalInvested.toFixed(2)}</div>
+                      <div>• Final Value: ${result.metrics.finalValue.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="p-3 bg-green-900/20 border border-green-700 rounded-lg">
+                    <div className="text-sm font-semibold text-green-300 mb-2">Growth Analysis</div>
+                    <div className="text-xs text-green-200 space-y-1">
+                      <div>• Capital Growth: ${result.metrics.capitalGrowth?.toFixed(2) ?? 0}</div>
+                      <div>• Growth Percentage: {(result.metrics.capitalGrowthPct ?? 0).toFixed(2)}%</div>
+                      <div>• DCA Strategy: {dcaPeriodicity} investments of ${dcaCapital}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="text-xs text-gray-400">
+                    💡 DCA helps reduce the impact of market volatility by spreading investments over time
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}

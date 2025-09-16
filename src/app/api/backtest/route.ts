@@ -19,6 +19,8 @@ const schema = z.object({
           "aave",
           "chainlink",
           "fartcoin",
+          "wrapped-staked-ether",
+          "euro-coin",
         ]) as z.ZodType<AssetId>,
         allocation: z.number().min(0).max(1),
       })
@@ -33,6 +35,11 @@ const schema = z.object({
   }),
   initialCapital: z.number().positive().optional(),
   riskFreeRatePct: z.number().optional(),
+  dca: z.object({
+    enabled: z.boolean(),
+    amount: z.number().positive(),
+    periodicity: z.enum(["daily", "weekly", "monthly", "yearly"]),
+  }).optional(),
   prices: z.record(z.string(), z.array(z.object({
     date: z.string(),
     price: z.number(),
