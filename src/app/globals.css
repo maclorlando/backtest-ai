@@ -3,48 +3,60 @@
 @tailwind utilities;
 
 :root {
-  /* Uniswap-inspired color palette */
-  --bg-primary: 18 18 18; /* Dark charcoal background */
-  --bg-secondary: 26 26 26; /* Slightly lighter for cards */
-  --bg-tertiary: 34 34 34; /* Even lighter for elevated elements */
-  --fg-primary: 255 255 255; /* White text */
+  /* Uniswap-Inspired SagaFi Color Palette */
+  --bg-primary: 18 18 18; /* Deep charcoal (#121212) */
+  --bg-secondary: 26 26 26; /* Slightly lighter charcoal (#1A1A1A) */
+  --bg-tertiary: 34 34 34; /* Card backgrounds (#222222) */
+  --bg-quaternary: 42 42 42; /* Elevated elements (#2A2A2A) */
+  --fg-primary: 255 255 255; /* Pure white text */
   --fg-secondary: 156 163 175; /* Light gray for secondary text */
-  --fg-tertiary: 107 114 128; /* Darker gray for tertiary text */
-  --accent-primary: 236 72 153; /* Vibrant pink/magenta */
-  --accent-secondary: 168 85 247; /* Purple */
-  --border-primary: 55 65 81; /* Dark gray borders */
-  --border-secondary: 75 85 99; /* Lighter borders */
-  --success: 34 197 94; /* Green */
-  --warning: 251 191 36; /* Yellow */
-  --danger: 239 68 68; /* Red */
+  --fg-tertiary: 107 114 128; /* Medium gray for tertiary text */
+  --accent-primary: 255 0 122; /* Uniswap pink (#FF007A) */
+  --accent-secondary: 168 85 247; /* Purple accent (#A855F7) */
+  --accent-tertiary: 59 130 246; /* Blue accent (#3B82F6) */
+  --border-primary: 55 65 81; /* Dark borders (#374151) */
+  --border-secondary: 75 85 99; /* Lighter borders (#4B5563) */
+  --success: 34 197 94; /* Green (#22C55E) */
+  --warning: 251 191 36; /* Yellow (#FBBF24) */
+  --danger: 239 68 68; /* Red (#EF4444) */
 }
 
 @media (prefers-color-scheme: dark) {
   :root { 
-    --bg-primary: 18 18 18; 
-    --bg-secondary: 26 26 26; 
-    --bg-tertiary: 34 34 34; 
-    --fg-primary: 255 255 255; 
-    --fg-secondary: 156 163 175; 
-    --fg-tertiary: 107 114 128; 
-    --accent-primary: 236 72 153; 
-    --accent-secondary: 168 85 247; 
-    --border-primary: 55 65 81; 
-    --border-secondary: 75 85 99; 
+    --bg-primary: 18 18 18; /* Deep charcoal */
+    --bg-secondary: 26 26 26; /* Slightly lighter charcoal */
+    --bg-tertiary: 34 34 34; /* Card backgrounds */
+    --bg-quaternary: 42 42 42; /* Elevated elements */
+    --fg-primary: 255 255 255; /* Pure white text */
+    --fg-secondary: 156 163 175; /* Light gray */
+    --fg-tertiary: 107 114 128; /* Medium gray */
+    --accent-primary: 255 0 122; /* Uniswap pink */
+    --accent-secondary: 168 85 247; /* Purple accent */
+    --accent-tertiary: 59 130 246; /* Blue accent */
+    --border-primary: 55 65 81; /* Dark borders */
+    --border-secondary: 75 85 99; /* Lighter borders */
+    --success: 34 197 94; /* Green */
+    --warning: 251 191 36; /* Yellow */
+    --danger: 239 68 68; /* Red */
   }
 }
 
 .dark :root { 
-  --bg-primary: 18 18 18; 
-  --bg-secondary: 26 26 26; 
-  --bg-tertiary: 34 34 34; 
-  --fg-primary: 255 255 255; 
-  --fg-secondary: 156 163 175; 
-  --fg-tertiary: 107 114 128; 
-  --accent-primary: 236 72 153; 
-  --accent-secondary: 168 85 247; 
-  --border-primary: 55 65 81; 
-  --border-secondary: 75 85 99; 
+  --bg-primary: 18 18 18; /* Deep charcoal */
+  --bg-secondary: 26 26 26; /* Slightly lighter charcoal */
+  --bg-tertiary: 34 34 34; /* Card backgrounds */
+  --bg-quaternary: 42 42 42; /* Elevated elements */
+  --fg-primary: 255 255 255; /* Pure white text */
+  --fg-secondary: 156 163 175; /* Light gray */
+  --fg-tertiary: 107 114 128; /* Medium gray */
+  --accent-primary: 255 0 122; /* Uniswap pink */
+  --accent-secondary: 168 85 247; /* Purple accent */
+  --accent-tertiary: 59 130 246; /* Blue accent */
+  --border-primary: 55 65 81; /* Dark borders */
+  --border-secondary: 75 85 99; /* Lighter borders */
+  --success: 34 197 94; /* Green */
+  --warning: 251 191 36; /* Yellow */
+  --danger: 239 68 68; /* Red */
 }
 
 body {
@@ -138,23 +150,27 @@ body {
 .btn-primary {
   background: rgb(var(--accent-primary));
   color: white;
+  border: none;
+  box-shadow: 0 4px 12px rgba(var(--accent-primary), 0.3);
 }
 
 .btn-primary:hover {
-  background: rgb(217, 70, 139);
+  background: rgb(255, 20, 147); /* Slightly brighter pink on hover */
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
+  box-shadow: 0 6px 16px rgba(var(--accent-primary), 0.4);
 }
 
 .btn-secondary {
   background: rgb(var(--bg-tertiary));
   color: rgb(var(--fg-primary));
-  border: 1px solid rgb(var(--border-secondary));
+  border: 1px solid rgb(var(--border-primary));
 }
 
 .btn-secondary:hover {
-  background: rgb(var(--bg-secondary));
+  background: rgb(var(--bg-quaternary));
   border-color: rgb(var(--accent-primary));
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(var(--accent-primary), 0.2);
 }
 
 .btn-ghost {
@@ -246,7 +262,8 @@ body {
 .input:focus {
   outline: none;
   border-color: rgb(var(--accent-primary));
-  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.1);
+  box-shadow: 0 0 0 3px rgba(var(--accent-primary), 0.15);
+  background: rgb(var(--bg-tertiary));
 }
 
 .input::placeholder {
@@ -275,9 +292,9 @@ body {
 }
 
 .badge-primary {
-  background: rgba(236, 72, 153, 0.1);
+  background: rgba(var(--accent-primary), 0.1);
   color: rgb(var(--accent-primary));
-  border-color: rgba(236, 72, 153, 0.3);
+  border-color: rgba(var(--accent-primary), 0.3);
 }
 
 .badge-success {
@@ -344,8 +361,9 @@ body {
 }
 
 .nav-item.active {
-  background: rgba(236, 72, 153, 0.1);
+  background: rgba(var(--accent-primary), 0.1);
   color: rgb(var(--accent-primary));
+  border-color: rgba(var(--accent-primary), 0.3);
 }
 
 /* Hero section styles - Mobile first */
@@ -750,19 +768,21 @@ html {
 .wallet-connect-wrapper appkit-button {
   /* Override default appkit button styles to match our design */
   --appkit-button-background: rgb(var(--accent-primary));
-  --appkit-button-background-hover: rgb(var(--accent-secondary));
+  --appkit-button-background-hover: rgb(255, 20, 147);
   --appkit-button-color: white;
   --appkit-button-border-radius: 0.5rem;
   --appkit-button-font-weight: 500;
   --appkit-button-padding: 0.5rem 1rem;
   --appkit-button-font-size: 0.875rem;
   --appkit-button-transition: all 0.2s ease-in-out;
+  --appkit-button-border: none;
+  --appkit-button-box-shadow: 0 4px 12px rgba(var(--accent-primary), 0.3);
 }
 
 .wallet-connect-wrapper appkit-button:hover {
-  --appkit-button-background: rgb(var(--accent-secondary));
+  --appkit-button-background: rgb(255, 20, 147);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(var(--accent-primary), 0.3);
+  box-shadow: 0 6px 16px rgba(var(--accent-primary), 0.4);
 }
 
 /* Ensure proper sizing and alignment */
@@ -792,7 +812,8 @@ html {
   right: 0;
   bottom: 0;
   background: radial-gradient(circle at 20% 80%, rgba(var(--accent-primary), 0.1) 0%, transparent 50%),
-              radial-gradient(circle at 80% 20%, rgba(var(--accent-secondary), 0.1) 0%, transparent 50%);
+              radial-gradient(circle at 80% 20%, rgba(var(--accent-secondary), 0.1) 0%, transparent 50%),
+              radial-gradient(circle at 50% 50%, rgba(var(--accent-tertiary), 0.05) 0%, transparent 70%);
   pointer-events: none;
 }
 
@@ -814,11 +835,15 @@ html {
 .card {
   transition: all 0.3s ease;
   border: 1px solid rgb(var(--border-primary));
+  background: rgb(var(--bg-tertiary));
+  backdrop-filter: blur(10px);
 }
 
 .card:hover {
   border-color: rgb(var(--accent-primary));
-  box-shadow: 0 8px 32px rgba(var(--accent-primary), 0.1);
+  box-shadow: 0 8px 32px rgba(var(--accent-primary), 0.15);
+  background: rgb(var(--bg-quaternary));
+  transform: translateY(-2px);
 }
 
 /* Stats Section */
@@ -870,7 +895,8 @@ html {
   left: 0;
   right: 0;
   bottom: 0;
-  background: radial-gradient(circle at 50% 50%, rgba(var(--accent-primary), 0.05) 0%, transparent 70%);
+  background: radial-gradient(circle at 50% 50%, rgba(var(--accent-primary), 0.1) 0%, transparent 70%),
+              radial-gradient(circle at 30% 70%, rgba(var(--accent-secondary), 0.05) 0%, transparent 60%);
   pointer-events: none;
 }
 

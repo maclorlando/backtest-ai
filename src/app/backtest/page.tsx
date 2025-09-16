@@ -3,7 +3,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { format, subYears, differenceInCalendarDays } from "date-fns";
 import Image from "next/image";
 import { ASSET_ID_TO_SYMBOL, type AssetId, type BacktestRequest, type BacktestResponse } from "@/lib/types";
-import { fetchCoinLogos, fetchCurrentPricesUSD } from "@/lib/prices";
+import { fetchCoinLogos, fetchCurrentPricesUSD, checkPriceDataAvailability, fetchPricesForBacktest, resetRateLimitState } from "@/lib/prices";
 import { IconChartLine, IconTrendingUp, IconShield } from "@tabler/icons-react";
 import { showSuccessNotification, showWarningNotification, showErrorNotification } from "@/lib/utils/errorHandling";
 import { getCoinGeckoApiKey } from "@/lib/utils/apiKey";
@@ -29,6 +29,11 @@ export default function BacktestPage() {
   const [thresholdPct, setThresholdPct] = useState(5);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [priceDataAvailable, setPriceDataAvailable] = useState<boolean | null>(null);
+  const [priceDataError, setPriceDataError] = useState<string | null>(null);
+  const [fetchingPrices, setFetchingPrices] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState(0);
+  const [currentAsset, setCurrentAsset] = useState<string | null>(null);
   
   type BacktestUIResult = {
     series: {
@@ -79,12 +84,45 @@ export default function BacktestPage() {
     { key: string; name: string; color: string; kpis: { cagrPct: number; volPct: number; maxDdPct: number; rr: number | null } }[]
   >([]);
 
-  // Load logos on mount and when assets change
-  useEffect(() => {
-    const ids = Array.from(new Set(allocations.map((a) => a.id)));
+  // Load logos only when needed (lazy loading)
+  const loadLogosForAssets = async (assetIds: AssetId[]) => {
     const key = getCoinGeckoApiKey();
-    fetchCoinLogos(ids, key).then(setLogos).catch(() => {});
-  }, [allocations]);
+    try {
+      const logos = await fetchCoinLogos(assetIds, key);
+      setLogos(prev => ({ ...prev, ...logos }));
+    } catch (error) {
+      console.warn('Failed to load logos:', error);
+    }
+  };
+
+
+  // Check price data availability only when backtest is requested
+  const checkPriceDataAvailabilityForBacktest = async () => {
+    const ids = Array.from(new Set(allocations.map((a) => a.id)));
+    if (ids.length === 0) {
+      setPriceDataAvailable(false);
+      setPriceDataError("No assets selected");
+      return false;
+    }
+    
+    if (!start || !end) {
+      setPriceDataAvailable(false);
+      setPriceDataError("Date range not set");
+      return false;
+    }
+    
+    const key = getCoinGeckoApiKey();
+    try {
+      const result = await checkPriceDataAvailability(ids, key, start, end);
+      setPriceDataAvailable(result.available);
+      setPriceDataError(result.error || null);
+      return result.available;
+    } catch (error) {
+      setPriceDataAvailable(false);
+      setPriceDataError(error instanceof Error ? error.message : "Unknown error");
+      return false;
+    }
+  };
 
   // Hydration-safe load of saved portfolios from localStorage
   useEffect(() => {
@@ -98,33 +136,27 @@ export default function BacktestPage() {
     }
   }, []);
 
-  // Also fetch logos for the full supported asset list once so options render with icons
-  useEffect(() => {
-    const allIds: AssetId[] = [
-      "usd-coin",
-      "bitcoin",
-      "ethereum",
-      "solana",
-      "tether",
-      "pepe",
-      "polkadot",
-      "aave",
-      "chainlink",
-      "fartcoin",
-    ];
+  // Load current prices only when needed (lazy loading)
+  const loadCurrentPrices = async (assetIds: AssetId[]) => {
     const key = getCoinGeckoApiKey();
-    fetchCoinLogos(allIds, key).then((res) => setLogos((prev) => ({ ...res, ...prev }))).catch(() => {});
-    fetchCurrentPricesUSD(allIds, key).then(setSpot).catch(() => {});
-  }, []);
+    try {
+      const prices = await fetchCurrentPricesUSD(assetIds, key);
+      setSpot(prev => ({ ...prev, ...prices }));
+    } catch (error) {
+      console.warn('Failed to load current prices:', error);
+    }
+  };
 
   // Initialize dates on client to avoid SSR hydration mismatch due to timezones
   useEffect(() => {
     if (!start || !end) {
       const now = new Date();
       setEnd(format(now, "yyyy-MM-dd"));
-      setStart(format(subYears(now, 5), "yyyy-MM-dd"));
+      // Default to 3 years for better statistical significance with Alchemy API
+      setStart(format(subYears(now, 3), "yyyy-MM-dd"));
     }
   }, []);
+
 
   async function saveCurrentPortfolio() {
     // If we already have a result, reuse it; otherwise call API
@@ -181,8 +213,34 @@ export default function BacktestPage() {
   async function run() {
     setError(null);
     setLoading(true);
+    setFetchingPrices(true);
+    setFetchProgress(0);
+    setCurrentAsset(null);
+    
     try {
       const cgKey = getCoinGeckoApiKey();
+      const assetIds = Array.from(new Set(allocations.map((a) => a.id)));
+      
+      // Load logos and current prices in parallel with historical data fetching
+      console.log(`Starting backtest for assets: ${assetIds.join(', ')}`);
+      console.log(`Portfolio allocations:`, allocations);
+      
+      // Start all data fetching in parallel for maximum speed
+      const [prices] = await Promise.all([
+        // Fetch historical prices with progress tracking
+        fetchPricesForBacktest(assetIds, start, end, cgKey, (assetId, progress) => {
+          setCurrentAsset(assetId);
+          setFetchProgress(progress);
+        }),
+        // Load logos and current prices in background (non-blocking)
+        loadLogosForAssets(assetIds).catch(() => {}),
+        loadCurrentPrices(assetIds).catch(() => {})
+      ]);
+      
+      setFetchingPrices(false);
+      setFetchProgress(100);
+      
+      // Now run the backtest with the fetched prices
       const res = await fetch("/api/backtest", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(cgKey ? { "x-cg-key": cgKey } : {}) },
@@ -196,6 +254,7 @@ export default function BacktestPage() {
             thresholdPct: mode === "threshold" ? thresholdPct : undefined,
           },
           initialCapital,
+          prices, // Pass the fetched prices directly
         }),
       });
       const data = await res.json();
@@ -210,20 +269,9 @@ export default function BacktestPage() {
         }
       }, 100);
       
-      
-      // Auto-scroll to results section
-      setTimeout(() => {
-        const resultsSection = document.querySelector('.chart-container');
-        if (resultsSection) {
-          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 100);
-      
       if (Array.isArray(data?.integrity?.issues) && data.integrity.issues.length > 0) {
         showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
-        showWarningNotification("Backtest Completed with Warnings", `${data.integrity.issues.length} data quality issue(s) detected`);
       } else {
-        showSuccessNotification("Backtest Completed", "Analysis completed successfully");
         showSuccessNotification("Backtest Completed", "Analysis completed successfully");
       }
     } catch (e) {
@@ -231,6 +279,9 @@ export default function BacktestPage() {
       setError(msg);
     } finally {
       setLoading(false);
+      setFetchingPrices(false);
+      setFetchProgress(0);
+      setCurrentAsset(null);
     }
   }
 
@@ -352,7 +403,7 @@ export default function BacktestPage() {
     <div className="space-y-8">
       {/* Hero Section */}
       <section className="hero">
-        <h1 className="hero-title">DeBank - Portfolio Backtesting</h1>
+        <h1 className="hero-title">SagaFi - Portfolio Backtesting</h1>
         <p className="hero-subtitle">
           Test your crypto investment strategies with historical data. Analyze performance, 
           optimize allocations, and make data-driven decisions for Aave Base markets.
@@ -434,23 +485,26 @@ export default function BacktestPage() {
               </p>
             </div>
             
-            <button 
-              onClick={run} 
-              disabled={Math.abs(allocationSum - 1) > 1e-4 || loading}
-              className="btn btn-primary btn-lg w-full"
-            >
-              {loading ? (
-                <div className="flex items-center gap-2">
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                  Running Backtest...
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <IconChartLine size={20} />
-                  Run Backtest
-                </div>
-              )}
-            </button>
+            <div className="relative group">
+              <button 
+                onClick={run} 
+                disabled={Math.abs(allocationSum - 1) > 1e-4 || loading || fetchingPrices}
+                className="btn btn-primary btn-lg w-full disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading || fetchingPrices ? (
+                  <div className="flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    {fetchingPrices ? 'Fetching Prices...' : 'Running Backtest...'}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <IconChartLine size={20} />
+                    Run Backtest
+                  </div>
+                )}
+              </button>
+              
+            </div>
             
             {error && (
               <div className="p-3 bg-red-900/20 border border-red-700 rounded-lg text-red-300 text-sm">
@@ -461,6 +515,35 @@ export default function BacktestPage() {
             {Math.abs(allocationSum - 1) > 1e-4 && (
               <div className="p-3 bg-yellow-900/20 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
                 ⚠️ Portfolio allocation is not 100%. Current allocation: {(allocationSum * 100).toFixed(1)}%
+              </div>
+            )}
+            
+            {/* Price data availability will be checked when backtest is requested */}
+            
+            {fetchingPrices && (
+              <div className="p-3 bg-blue-900/20 border border-blue-700 rounded-lg text-blue-300 text-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-300"></div>
+                  Fetching historical prices... {Math.round(fetchProgress)}%
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2 mb-2">
+                  <div 
+                    className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${fetchProgress}%` }}
+                  ></div>
+                </div>
+                {currentAsset && (
+                  <div className="text-center text-xs text-gray-400">
+                    Fetching data for {ASSET_ID_TO_SYMBOL[currentAsset as AssetId] || currentAsset}...
+                  </div>
+                )}
+                <div className="text-center text-xs text-gray-500 mt-2">
+                  ⚡ Chunked data fetching (365-day segments)
+                  <br />
+                  ⏱️ Sequential processing for optimal API usage
+                  <br />
+                  📅 Extensive historical data coverage available
+                </div>
               </div>
             )}
           </div>

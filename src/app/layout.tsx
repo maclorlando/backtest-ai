@@ -77,8 +77,8 @@ export default async function RootLayout({
 	return (
 		<html lang="en" className="dark">
 			<head>
-				<title>Backtest AI</title>
-				<meta name="description" content="Advanced crypto portfolio backtesting and analysis" />
+				<title>SagaFi</title>
+				<meta name="description" content="Advanced DeFi portfolio management and analysis platform" />
 				<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 				<link rel="preconnect" href="https://fonts.googleapis.com" />
 				<link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />

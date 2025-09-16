@@ -83,9 +83,9 @@ export default function LandingPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <h1 className="hero-title text-5xl md:text-6xl lg:text-7xl font-bold mb-6">
-              DeBank
+              SagaFi
               <span className="block text-2xl md:text-3xl lg:text-4xl font-normal text-[rgb(var(--fg-secondary))] mt-2">
-                (DeFi Bank)
+                (DeFi Portfolio Management)
               </span>
             </h1>
             <p className="hero-subtitle text-xl md:text-2xl mb-8 max-w-3xl mx-auto">
@@ -269,7 +269,7 @@ export default function LandingPage() {
           <div className="text-center mb-16">
             <h2 className="text-4xl font-bold text-[rgb(var(--fg-primary))] mb-4">Built For Everyone</h2>
             <p className="text-xl text-[rgb(var(--fg-secondary))] max-w-2xl mx-auto">
-              From retail investors to institutions, DeBank serves all DeFi users
+              From retail investors to institutions, SagaFi serves all DeFi users
             </p>
           </div>
           
