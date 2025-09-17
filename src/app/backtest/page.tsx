@@ -151,7 +151,16 @@ export default function BacktestPage() {
   useEffect(() => {
     if (mounted) {
       console.log('Preloading common assets data...');
-      dataService.preloadCommonAssets().catch(error => {
+      dataService.preloadCommonAssets().then(() => {
+        // Load the preloaded data into component state
+        const commonAssets: AssetId[] = [
+          'bitcoin', 'ethereum', 'usd-coin', 'tether', 'solana',
+          'pepe', 'polkadot', 'aave', 'chainlink', 'fartcoin',
+          'wrapped-staked-ether', 'euro-coin'
+        ];
+        loadCurrentPrices(commonAssets);
+        loadLogosForAssets(commonAssets);
+      }).catch(error => {
         console.warn('Failed to preload common assets:', error);
       });
       
@@ -172,8 +181,14 @@ export default function BacktestPage() {
   // Load current prices using centralized data service
   const loadCurrentPrices = async (assetIds: AssetId[]) => {
     try {
+      console.log('Backtest page: Loading current prices for:', assetIds);
       const prices = await dataService.getCurrentPrices(assetIds);
-      setSpot(prev => ({ ...prev, ...prices }));
+      console.log('Backtest page: Received prices:', prices);
+      setSpot(prev => {
+        const updated = { ...prev, ...prices };
+        console.log('Backtest page: Updated spot state:', updated);
+        return updated;
+      });
     } catch (error) {
       console.warn('Failed to load current prices:', error);
     }
@@ -510,7 +525,9 @@ export default function BacktestPage() {
           allocations={allocations}
           setAllocations={setAllocations}
           spot={spot}
+          setSpot={setSpot}
           logos={logos}
+          setLogos={setLogos}
           initialCapital={initialCapital}
           setInitialCapital={setInitialCapital}
           onSave={saveCurrentPortfolio}
