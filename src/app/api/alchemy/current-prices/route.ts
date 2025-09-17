@@ -99,7 +99,6 @@ async function fetchCurrentPrices(assetIds: AssetId[]): Promise<Record<string, n
     if (result[assetId] !== undefined) {
       continue;
     }
-    
     const symbol = ASSET_ID_TO_SYMBOL_MAP[assetId];
     
     if (!symbol) {
@@ -150,7 +149,7 @@ async function fetchCurrentPrices(assetIds: AssetId[]): Promise<Record<string, n
         result[assetId] = price;
         
         // Cache the result
-        priceCache.set(cacheKey, { price, timestamp: Date.now() });
+        priceCache.set(localCacheKey, { price, timestamp: Date.now() });
         
         console.log(`Current price for ${symbol}: $${price}`);
       } else {
