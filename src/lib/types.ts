@@ -28,6 +28,12 @@ export interface BacktestRequest {
   };
   initialCapital?: number; // default 100
   riskFreeRatePct?: number; // annualized, default 0
+  dca?: {
+    enabled: boolean;
+    amount: number; // amount to invest at each interval
+    periodicity: "daily" | "weekly" | "monthly" | "yearly";
+  };
+  prices?: PricesByAsset; // optional pre-fetched price data
 }
 
 export interface PricePoint {
@@ -65,6 +71,11 @@ export interface BacktestMetrics {
   maxDrawdownPct: number;
   bestDayPct: number;
   worstDayPct: number;
+  // DCA-specific metrics
+  totalInvested?: number; // total amount invested (initial + DCA contributions)
+  dcaContributions?: number; // total DCA contributions
+  capitalGrowth?: number; // final value - total invested
+  capitalGrowthPct?: number; // capital growth as percentage of total invested
 }
 
 export interface BacktestResponse {

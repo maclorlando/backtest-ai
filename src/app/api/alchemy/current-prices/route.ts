@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { AssetId } from "@/lib/types";
+import { globalCache, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
 
 // Schema for the request body
 const schema = z.object({
@@ -73,8 +74,32 @@ async function rateLimit(): Promise<void> {
 async function fetchCurrentPrices(assetIds: AssetId[]): Promise<Record<string, number>> {
   const result: Record<string, number> = {};
   
+  // Check global cache first for all assets
+  const cacheKey = CACHE_KEYS.CURRENT_PRICES;
+  const cachedPrices = globalCache.get<Record<string, number>>(cacheKey);
+  
+  if (cachedPrices) {
+    console.log(`Using cached current prices for ${Object.keys(cachedPrices).length} assets`);
+    // Return only the requested assets from cache
+    for (const assetId of assetIds) {
+      if (cachedPrices[assetId] !== undefined) {
+        result[assetId] = cachedPrices[assetId];
+      }
+    }
+    
+    // If we have all requested assets in cache, return early
+    if (Object.keys(result).length === assetIds.length) {
+      return result;
+    }
+  }
+  
   // Process assets sequentially to respect rate limits
   for (const assetId of assetIds) {
+    // Skip if we already have this asset from cache
+    if (result[assetId] !== undefined) {
+      continue;
+    }
+    
     const symbol = ASSET_ID_TO_SYMBOL_MAP[assetId];
     
     if (!symbol) {
@@ -82,11 +107,11 @@ async function fetchCurrentPrices(assetIds: AssetId[]): Promise<Record<string, n
       continue;
     }
 
-    // Check cache first
-    const cacheKey = `price_${symbol}`;
-    const cached = priceCache.get(cacheKey);
+    // Check local cache as fallback
+    const localCacheKey = `price_${symbol}`;
+    const cached = priceCache.get(localCacheKey);
     if (cached && (Date.now() - cached.timestamp) < PRICE_CACHE_DURATION) {
-      console.log(`Using cached price for ${symbol}: $${cached.price}`);
+      console.log(`Using local cached price for ${symbol}: $${cached.price}`);
       result[assetId] = cached.price;
       continue;
     }
@@ -135,6 +160,12 @@ async function fetchCurrentPrices(assetIds: AssetId[]): Promise<Record<string, n
     } catch (error) {
       console.error(`Failed to fetch current price for ${symbol}:`, error);
     }
+  }
+  
+  // Cache the results globally
+  if (Object.keys(result).length > 0) {
+    globalCache.set(cacheKey, result, CACHE_TTL.CURRENT_PRICES);
+    console.log(`Cached current prices for ${Object.keys(result).length} assets (TTL: ${CACHE_TTL.CURRENT_PRICES}ms)`);
   }
   
   return result;

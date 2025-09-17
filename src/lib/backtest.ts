@@ -1,4 +1,4 @@
-import { differenceInCalendarDays } from "date-fns";
+import { differenceInCalendarDays, addDays, addWeeks, addMonths, addYears } from "date-fns";
 import type {
   BacktestMetrics,
   BacktestRequest,
@@ -37,16 +37,19 @@ function interpolateLastKnown(
   return out;
 }
 
-function computeMetrics(values: number[], dates: string[], riskFreeRatePct = 0): BacktestMetrics {
+function computeMetrics(values: number[], dates: string[], riskFreeRatePct = 0, dcaData?: { totalInvested: number; dcaContributions: number }): BacktestMetrics {
   const initialCapital = values[0];
   const finalValue = values[values.length - 1];
-  const cumulativeReturn = finalValue / initialCapital - 1;
+  
+  // For DCA strategies, use total invested as the baseline for return calculations
+  const baselineCapital = dcaData ? dcaData.totalInvested : initialCapital;
+  const cumulativeReturn = finalValue / baselineCapital - 1;
   const tradingDays = values.length;
 
   const startDate = dates[0];
   const endDate = dates[dates.length - 1];
   const years = Math.max(1 / 365, differenceInCalendarDays(new Date(endDate), new Date(startDate)) / 365);
-  const cagr = Math.pow(finalValue / initialCapital, 1 / years) - 1;
+  const cagr = Math.pow(finalValue / baselineCapital, 1 / years) - 1;
 
   const dailyReturns: number[] = [];
   let prev = values[0];
@@ -74,7 +77,7 @@ function computeMetrics(values: number[], dates: string[], riskFreeRatePct = 0):
     if (dd < maxDd) maxDd = dd;
   }
 
-  return {
+  const baseMetrics = {
     startDate,
     endDate,
     tradingDays,
@@ -88,6 +91,56 @@ function computeMetrics(values: number[], dates: string[], riskFreeRatePct = 0):
     bestDayPct: bestDay * 100,
     worstDayPct: worstDay * 100,
   };
+
+  // Add DCA-specific metrics if DCA data is provided
+  if (dcaData) {
+    const capitalGrowth = finalValue - dcaData.totalInvested;
+    const capitalGrowthPct = dcaData.totalInvested > 0 ? (capitalGrowth / dcaData.totalInvested) * 100 : 0;
+    
+    return {
+      ...baseMetrics,
+      totalInvested: dcaData.totalInvested,
+      dcaContributions: dcaData.dcaContributions,
+      capitalGrowth,
+      capitalGrowthPct,
+    };
+  }
+
+  return baseMetrics;
+}
+
+// Helper function to get next DCA date based on periodicity
+function getNextDCADate(currentDate: Date, periodicity: "daily" | "weekly" | "monthly" | "yearly"): Date {
+  switch (periodicity) {
+    case "daily":
+      return addDays(currentDate, 1);
+    case "weekly":
+      return addWeeks(currentDate, 1);
+    case "monthly":
+      return addMonths(currentDate, 1);
+    case "yearly":
+      return addYears(currentDate, 1);
+    default:
+      return addDays(currentDate, 1);
+  }
+}
+
+// Helper function to check if a date is a DCA date
+function isDCADate(date: Date, startDate: Date, periodicity: "daily" | "weekly" | "monthly" | "yearly"): boolean {
+  const daysDiff = differenceInCalendarDays(date, startDate);
+  
+  switch (periodicity) {
+    case "daily":
+      return true; // Every day
+    case "weekly":
+      return daysDiff % 7 === 0;
+    case "monthly":
+      return date.getDate() === startDate.getDate();
+    case "yearly":
+      return date.getMonth() === startDate.getMonth() && date.getDate() === startDate.getDate();
+    default:
+      return false;
+  }
 }
 
 export function runBacktest(
@@ -143,6 +196,13 @@ export function runBacktest(
   const targetWeights = Object.fromEntries(
     req.assets.map((a) => [a.id, a.allocation] as const)
   );
+
+  // DCA setup
+  const dcaEnabled = req.dca?.enabled ?? false;
+  const dcaAmount = req.dca?.amount ?? 0;
+  const dcaPeriodicity = req.dca?.periodicity ?? "monthly";
+  const startDate = new Date(req.startDate);
+  let totalDcaContributions = 0;
 
   // initial units per asset
   const firstPrices: Record<string, number> = Object.fromEntries(
@@ -255,6 +315,32 @@ export function runBacktest(
   for (let i = 0; i < timeline.length; i++) {
     // Convert any pending cash for assets that become available now
     convertPendingIfAvailable(i);
+    
+    // Handle DCA investment if enabled and it's a DCA date
+    if (dcaEnabled && dcaAmount > 0) {
+      const currentDate = new Date(timeline[i]);
+      if (isDCADate(currentDate, startDate, dcaPeriodicity)) {
+        // Immediately invest DCA amount in the portfolio according to target allocations
+        for (const a of req.assets) {
+          const dcaAllocation = dcaAmount * a.allocation;
+          const currentPrice = perAssetPrices[a.id][i];
+          
+          if (Number.isFinite(currentPrice) && currentPrice > 0) {
+            // Buy assets immediately at current price
+            const additionalUnits = dcaAllocation / currentPrice;
+            units[a.id] = (units[a.id] ?? 0) + additionalUnits;
+            console.log(`DCA: Bought ${additionalUnits.toFixed(6)} units of ${a.id} at $${currentPrice} for $${dcaAllocation.toFixed(2)}`);
+          } else {
+            // If price not available, add to pending cash
+            pendingCashByAsset[a.id] = (pendingCashByAsset[a.id] ?? 0) + dcaAllocation;
+            console.log(`DCA: Added $${dcaAllocation.toFixed(2)} to pending cash for ${a.id} (price not available)`);
+          }
+        }
+        totalDcaContributions += dcaAmount;
+        console.log(`DCA investment of $${dcaAmount} on ${timeline[i]}`);
+      }
+    }
+    
     maybeRebalance(i);
     const cashNow = Object.values(pendingCashByAsset).reduce((s, c) => s + (c || 0), 0);
     const v = valueAt(i);
@@ -270,10 +356,17 @@ export function runBacktest(
     }
   }
 
+  // Calculate DCA metrics if DCA is enabled
+  const dcaData = dcaEnabled ? {
+    totalInvested: initialCapital + totalDcaContributions,
+    dcaContributions: totalDcaContributions
+  } : undefined;
+
   const metrics = computeMetrics(
     portfolioValues,
     timeline,
-    req.riskFreeRatePct ?? 0
+    req.riskFreeRatePct ?? 0,
+    dcaData
   );
 
   // Per-asset volatility (annualized)

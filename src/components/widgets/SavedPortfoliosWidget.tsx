@@ -14,6 +14,9 @@ type SavedRecord = {
   periodDays?: number; 
   thresholdPct?: number; 
   initialCapital: number;
+  dcaEnabled?: boolean;
+  dcaCapital?: number;
+  dcaPeriodicity?: "daily" | "weekly" | "monthly" | "yearly";
   kpis?: {
     finalValue: number;
     retPct: number;

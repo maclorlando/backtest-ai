@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { AssetId, PricePoint } from "@/lib/types";
+import { globalCache, CACHE_KEYS, CACHE_TTL } from "@/lib/cache";
 
 // Schema for the request body
 const schema = z.object({
@@ -220,24 +221,43 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parsed = schema.parse(body);
 
-    console.log('Alchemy prices API request:', {
+    console.log('🔍 Alchemy prices API request:', {
       assetIds: parsed.assetIds,
       startDate: parsed.startDate,
-      endDate: parsed.endDate
+      endDate: parsed.endDate,
+      requestId: Math.random().toString(36).substr(2, 9)
     });
 
     const start = new Date(parsed.startDate);
     const end = new Date(parsed.endDate);
     const result: Record<string, PricePoint[]> = {};
     
-    // Process assets sequentially
+    // Process assets sequentially with caching
     for (let i = 0; i < parsed.assetIds.length; i++) {
       const assetId = parsed.assetIds[i];
-      console.log(`Fetching data for ${assetId} (${i + 1}/${parsed.assetIds.length})`);
+      console.log(`Processing ${assetId} (${i + 1}/${parsed.assetIds.length})`);
+      
+      // Check cache first
+      const cacheKey = CACHE_KEYS.HISTORICAL_PRICES(assetId, parsed.startDate, parsed.endDate);
+      console.log(`Cache key for ${assetId}: ${cacheKey}`);
+      const cachedData = globalCache.get<PricePoint[]>(cacheKey);
+      
+      if (cachedData) {
+        console.log(`✅ Cache HIT for ${assetId}: ${cachedData.length} price points`);
+        result[assetId] = cachedData;
+        continue;
+      }
+      
+      console.log(`❌ Cache MISS for ${assetId}, fetching from Alchemy API`);
       
       try {
         const prices = await fetchAlchemyHistoricalPricesChunked(assetId, start, end);
         result[assetId] = prices;
+        
+        // Cache the result
+        globalCache.set(cacheKey, prices, CACHE_TTL.HISTORICAL_PRICES);
+        console.log(`Cached ${prices.length} price points for ${assetId} (TTL: ${CACHE_TTL.HISTORICAL_PRICES}ms)`);
+        
         console.log(`Successfully fetched ${prices.length} price points for ${assetId}`);
       } catch (error) {
         console.error(`Failed to fetch data for ${assetId}:`, error);
@@ -246,6 +266,10 @@ export async function POST(req: NextRequest) {
     }
     
     console.log(`Final result summary:`, Object.entries(result).map(([key, value]) => `${key}: ${value.length} points`));
+    
+    // Log cache statistics
+    const cacheStats = globalCache.getStats();
+    console.log(`📊 Cache stats: ${cacheStats.valid} valid, ${cacheStats.expired} expired, ${cacheStats.total} total entries`);
     
     return NextResponse.json(result);
   } catch (error) {
