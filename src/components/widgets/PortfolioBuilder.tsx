@@ -56,11 +56,9 @@ export default function PortfolioBuilder({
       
       // Update parent component's spot prices state
       console.log('PortfolioBuilder: Updating spot prices:', prices);
-      setSpot(prev => {
-        const updated = { ...prev, ...prices };
-        console.log('PortfolioBuilder: New spot state:', updated);
-        return updated;
-      });
+      const updated = { ...spot, ...prices };
+      console.log('PortfolioBuilder: New spot state:', updated);
+      setSpot(updated);
       
     } catch (error) {
       console.error('Error fetching current prices:', error);
@@ -78,11 +76,11 @@ export default function PortfolioBuilder({
     setLogoError(null);
     
     try {
-      const logos = await dataService.getTokenLogos(assetIds);
-      console.log('Fetched token logos:', logos);
+      const newLogos = await dataService.getTokenLogos(assetIds);
+      console.log('Fetched token logos:', newLogos);
       
       // Update parent component's logos state
-      setLogos(prev => ({ ...prev, ...logos }));
+      setLogos({ ...logos, ...newLogos });
       
     } catch (error) {
       console.error('Error fetching token logos:', error);
