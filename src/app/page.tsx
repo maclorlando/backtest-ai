@@ -85,7 +85,7 @@ export default function LandingPage() {
             <h1 className="hero-title text-5xl md:text-6xl lg:text-7xl font-bold mb-6">
               SagaFi
               <span className="block text-2xl md:text-3xl lg:text-4xl font-normal text-[rgb(var(--fg-secondary))] mt-2">
-                (DeFi Portfolio Management)
+                DeFi Portfolio Management
               </span>
             </h1>
             <p className="hero-subtitle text-xl md:text-2xl mb-8 max-w-3xl mx-auto">

@@ -11,7 +11,9 @@ interface PortfolioBuilderProps {
   allocations: AllocationRow[];
   setAllocations: (allocations: AllocationRow[]) => void;
   spot: Record<string, number>;
+  setSpot: (spot: Record<string, number>) => void;
   logos: Record<string, string>;
+  setLogos: (logos: Record<string, string>) => void;
   initialCapital: number;
   setInitialCapital: (capital: number) => void;
   onSave: () => void;
@@ -23,7 +25,9 @@ export default function PortfolioBuilder({
   allocations,
   setAllocations,
   spot,
+  setSpot,
   logos,
+  setLogos,
   initialCapital,
   setInitialCapital,
   onSave,
@@ -50,8 +54,13 @@ export default function PortfolioBuilder({
       const prices = await dataService.getCurrentPrices(assetIds);
       console.log('Fetched current prices:', prices);
       
-      // Note: In a real implementation, you'd want to update the parent component's state
-      // This could be done via a callback prop or context
+      // Update parent component's spot prices state
+      console.log('PortfolioBuilder: Updating spot prices:', prices);
+      setSpot(prev => {
+        const updated = { ...prev, ...prices };
+        console.log('PortfolioBuilder: New spot state:', updated);
+        return updated;
+      });
       
     } catch (error) {
       console.error('Error fetching current prices:', error);
@@ -72,8 +81,8 @@ export default function PortfolioBuilder({
       const logos = await dataService.getTokenLogos(assetIds);
       console.log('Fetched token logos:', logos);
       
-      // Note: In a real implementation, you'd want to update the parent component's state
-      // This could be done via a callback prop or context
+      // Update parent component's logos state
+      setLogos(prev => ({ ...prev, ...logos }));
       
     } catch (error) {
       console.error('Error fetching token logos:', error);
@@ -82,6 +91,19 @@ export default function PortfolioBuilder({
       setLoadingLogos(false);
     }
   };
+
+  // Load common assets data on component mount
+  useEffect(() => {
+    const commonAssets: AssetId[] = [
+      'bitcoin', 'ethereum', 'usd-coin', 'tether', 'solana',
+      'pepe', 'polkadot', 'aave', 'chainlink', 'fartcoin',
+      'wrapped-staked-ether', 'euro-coin'
+    ];
+    
+    // Load prices and logos for all common assets immediately
+    fetchCurrentPrices(commonAssets);
+    fetchTokenLogos(commonAssets);
+  }, []); // Run once on mount
 
   // Auto-fetch prices and logos when allocations change (with debouncing)
   useEffect(() => {
@@ -163,7 +185,8 @@ export default function PortfolioBuilder({
 
   const availableAssets: AssetId[] = [
     "bitcoin", "ethereum", "solana", "usd-coin", "tether", 
-    "pepe", "polkadot", "aave", "chainlink", "fartcoin"
+    "pepe", "polkadot", "aave", "chainlink", "fartcoin",
+    "wrapped-staked-ether", "euro-coin"
   ];
 
   return (
