@@ -104,7 +104,6 @@ const SYMBOL_TO_ASSET_ID: Record<string, AssetId> = {
   'AAVE': 'aave',
   'USDT': 'tether',
   'LINK': 'chainlink',
-  'UNI': 'uniswap',
 };
 
 /**
