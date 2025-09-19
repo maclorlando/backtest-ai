@@ -95,24 +95,43 @@ export default function AavePage() {
   };
 
   // Fetch current prices for wallet assets
-  async function fetchAssetPrices() {
-    if (walletBalances.length === 0) {
+  async function fetchAssetPrices(balances?: Array<{ symbol: string; address: Address; balance: string; decimals: number }>) {
+    const balancesToUse = balances || walletBalances;
+    
+    if (balancesToUse.length === 0) {
       console.log('No wallet balances to fetch prices for');
       return;
     }
     
     try {
-      const assetIds = walletBalances
+      const assetIds = balancesToUse
         .map(asset => mapSymbolToAssetId(asset.symbol))
         .filter((id): id is AssetId => id !== null);
       
       console.log('Fetching prices for asset IDs:', assetIds);
-      console.log('Wallet balances symbols:', walletBalances.map(a => a.symbol));
+      console.log('Wallet balances symbols:', balancesToUse.map(a => a.symbol));
       console.log('Current asset prices before fetch:', assetPrices);
       
       if (assetIds.length === 0) {
         console.log('No valid asset IDs found for price fetching');
         return;
+      }
+      
+      // Set fallback prices first (especially for USDC)
+      const fallbackPrices: Record<string, number> = {};
+      balancesToUse.forEach(asset => {
+        const assetId = mapSymbolToAssetId(asset.symbol);
+        if (assetId) {
+          if (asset.symbol === 'USDC' || asset.symbol === 'USDT') {
+            fallbackPrices[assetId] = 1.0; // Stablecoins should be $1
+            console.log(`Set fallback price for ${asset.symbol}: $1.00`);
+          }
+        }
+      });
+      
+      // Apply fallback prices immediately
+      if (Object.keys(fallbackPrices).length > 0) {
+        setAssetPrices(prev => ({ ...prev, ...fallbackPrices }));
       }
       
       console.log('Calling fetchCurrentPricesUSD with assetIds:', assetIds);
@@ -250,6 +269,12 @@ export default function AavePage() {
   const getAssetUSDValue = (symbol: string, balance: string): number => {
     const assetId = mapSymbolToAssetId(symbol);
     let price = assetId ? assetPrices[assetId] : 0;
+    
+    // Special fallback for stablecoins
+    if (price === 0 && (symbol === 'USDC' || symbol === 'USDT')) {
+      price = 1.0;
+      console.log(`Using stablecoin fallback price for ${symbol}: $1.00`);
+    }
     
     // Fallback: try to get price from Aave positions if Alchemy price is not available
     if (price === 0) {
@@ -659,7 +684,7 @@ export default function AavePage() {
       // Fetch prices for the assets
       if (balances.length > 0) {
         console.log('Wallet balances found, fetching prices...');
-        await fetchAssetPrices();
+        await fetchAssetPrices(balances);
       } else {
         console.log('No wallet balances found');
       }
