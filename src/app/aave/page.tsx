@@ -23,6 +23,9 @@ import { getMockPoolDataForChain } from "@/lib/aave/marketData";
 // Import price fetching functions
 import { fetchCurrentPricesUSD } from "@/lib/prices-alchemy";
 
+// Import PortfolioNAVWidget
+import PortfolioNAVWidget from "@/components/widgets/PortfolioNAVWidget";
+
 type SavedRecord = {
   allocations: { id: AssetId; allocation: number }[];
   start: string; end: string; mode: "none" | "periodic" | "threshold";
@@ -1976,16 +1979,29 @@ export default function AavePage() {
         {/* Positions Tab */}
         {activeTab === "positions" && (
           <div className="space-y-6">
+            {/* Portfolio NAV Widget */}
+            <PortfolioNAVWidget
+              walletBalances={walletBalances}
+              aavePositions={positions}
+              chainId={chainId}
+            />
+            
             {/* In-Wallet Available Assets Section */}
             {walletAddress && (
               <div className="card">
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">In-Wallet Available Assets</h3>
+                    <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--fg-primary))]">In-Wallet Available Assets</h3>
                     {walletBalances.length > 0 && (
                       <div className="text-sm text-[rgb(var(--fg-secondary))] mt-1">
                         Total Value: <span className="font-semibold text-green-600">
-                          ${walletBalances.reduce((total, asset) => total + getAssetUSDValue(asset.symbol, asset.balance), 0).toFixed(2)} USD
+                          {(() => {
+                            const totalValue = walletBalances.reduce((total, asset) => {
+                              const value = getAssetUSDValue(asset.symbol, asset.balance);
+                              return total + (isNaN(value) ? 0 : value);
+                            }, 0);
+                            return isNaN(totalValue) ? 'Loading...' : `$${totalValue.toFixed(2)} USD`;
+                          })()}
                         </span>
                       </div>
                     )}
@@ -2105,7 +2121,7 @@ export default function AavePage() {
 
             <div className="card">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-4 gap-3">
-                <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Your Aave Positions</h3>
+                <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--fg-primary))]">Your Aave Positions</h3>
                 <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
                   {(() => {
                     // Debug logging for emergency withdraw button
@@ -2122,8 +2138,7 @@ export default function AavePage() {
                       title="Emergency Withdraw: Withdraw all supplied assets from Aave"
                     >
                       <IconMinus size={14} />
-                      <span className="hidden sm:inline">Emergency Withdraw</span>
-                      <span className="sm:hidden">Withdraw All</span>
+                      <span>Withdraw All</span>
                       <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
                         Withdraw all supplied assets from Aave
                         <div className="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
@@ -2257,7 +2272,7 @@ export default function AavePage() {
                                   title={`Withdraw maximum available ${pos.symbol}`}
                               >
                                 <IconMinus size={12} />
-                                  Withdraw Max
+                                  Withdraw
                               </button>
                               ) : (
                                 <span className="text-xs text-gray-500">No supply</span>
@@ -2287,7 +2302,7 @@ export default function AavePage() {
             
             <div className="card">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))]">Network Pool Information</h3>
+                <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--fg-primary))]">Network Pool Information</h3>
                 <div className={`badge ${loading ? 'badge-primary' : poolInfo.length > 0 ? 'badge-success' : ''}`}>
                   {loading ? "Loading..." : poolInfo.length > 0 ? `${poolInfo.length} pools` : "No data"}
                 </div>
@@ -2298,44 +2313,107 @@ export default function AavePage() {
                 </div>
               ) : poolInfo.length > 0 ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full text-xs sm:text-sm">
                     <thead>
                       <tr className="border-b border-[rgb(var(--border-primary))]">
-                        <th className="text-left py-2 px-2">Asset</th>
-                        <th className="text-left py-2 px-2">Total Supply</th>
-                        <th className="text-left py-2 px-2">Total Borrow</th>
-                        <th className="text-left py-2 px-2">Supply APY</th>
-                        <th className="text-left py-2 px-2">Borrow APY</th>
-                        <th className="text-left py-2 px-2">Utilization</th>
-                        <th className="text-left py-2 px-2">Price</th>
+                        <th className="text-left py-2 px-1 sm:px-2">Asset</th>
+                        <th className="text-left py-2 px-1 sm:px-2 hidden sm:table-cell">Supply</th>
+                        <th className="text-left py-2 px-1 sm:px-2 hidden sm:table-cell">Borrow</th>
+                        <th className="text-left py-2 px-1 sm:px-2">Supply APY</th>
+                        <th className="text-left py-2 px-1 sm:px-2">Borrow APY</th>
+                        <th className="text-left py-2 px-1 sm:px-2 hidden md:table-cell">Util</th>
+                        <th className="text-left py-2 px-1 sm:px-2">Price</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {poolInfo.map((pool) => (
-                        <tr key={pool.symbol} className="border-b border-[rgb(var(--border-primary))]">
-                          <td className="py-2 px-2">
-                            <span className="font-semibold">{pool.symbol}</span>
+                      {poolInfo
+                        .filter(pool => ['USDC', 'cbBTC', 'WETH', 'wstETH', 'EURC', 'AAVE'].includes(pool.symbol))
+                        .map((pool) => (
+                        <tr key={pool.symbol} className="border-b border-[rgb(var(--border-primary))] hover:bg-[rgb(var(--bg-secondary))] transition-colors">
+                          <td className="py-3 px-1 sm:px-2">
+                            <div className="flex items-center gap-1 sm:gap-2">
+                              <div className="w-5 h-5 sm:w-6 sm:h-6 bg-[rgb(var(--accent-primary))] rounded-full flex items-center justify-center">
+                                <span className="text-xs font-bold text-white">{pool.symbol.charAt(0)}</span>
+                              </div>
+                              <span className="font-semibold text-xs sm:text-sm">{pool.symbol}</span>
+                            </div>
                           </td>
-                          <td className="py-2 px-2">{typeof pool.totalSupply === 'string' ? pool.totalSupply : '0'}</td>
-                          <td className="py-2 px-2">{typeof pool.totalBorrow === 'string' ? pool.totalBorrow : '0'}</td>
-                          <td className="py-2 px-2">{typeof pool.totalSupply === 'string' ? pool.totalSupply : '0'}</td>
-                          <td className="py-2 px-2">{typeof pool.totalBorrow === 'string' ? pool.totalBorrow : '0'}</td>
-                          <td className="py-2 px-2">
+                          <td className="py-3 px-1 sm:px-2 text-xs hidden sm:table-cell">
+                            {(() => {
+                              let supplyValue = 0;
+                              
+                              if (typeof pool.totalSupply === 'string') {
+                                supplyValue = parseFloat(pool.totalSupply);
+                              } else if (typeof pool.totalSupply === 'number') {
+                                supplyValue = pool.totalSupply;
+                              } else if (pool.totalSupply && typeof pool.totalSupply === 'object') {
+                                // Handle object case - try to extract value
+                                const obj = pool.totalSupply as any;
+                                if (obj.value) {
+                                  supplyValue = parseFloat(obj.value);
+                                } else if (obj.amount) {
+                                  supplyValue = parseFloat(obj.amount);
+                                } else if (obj.formatted) {
+                                  supplyValue = parseFloat(obj.formatted);
+                                }
+                              }
+                              
+                              if (isNaN(supplyValue) || supplyValue === 0) {
+                                return '0';
+                              }
+                              
+                              return supplyValue > 1000000 ? 
+                                `${(supplyValue / 1000000).toFixed(1)}M` : 
+                                supplyValue.toLocaleString();
+                            })()}
+                          </td>
+                          <td className="py-3 px-1 sm:px-2 text-xs hidden sm:table-cell">
+                            {(() => {
+                              let borrowValue = 0;
+                              
+                              if (typeof pool.totalBorrow === 'string') {
+                                borrowValue = parseFloat(pool.totalBorrow);
+                              } else if (typeof pool.totalBorrow === 'number') {
+                                borrowValue = pool.totalBorrow;
+                              } else if (pool.totalBorrow && typeof pool.totalBorrow === 'object') {
+                                // Handle object case - try to extract value
+                                const obj = pool.totalBorrow as any;
+                                if (obj.value) {
+                                  borrowValue = parseFloat(obj.value);
+                                } else if (obj.amount) {
+                                  borrowValue = parseFloat(obj.amount);
+                                } else if (obj.formatted) {
+                                  borrowValue = parseFloat(obj.formatted);
+                                }
+                              }
+                              
+                              if (isNaN(borrowValue) || borrowValue === 0) {
+                                return '0';
+                              }
+                              
+                              return borrowValue > 1000000 ? 
+                                `${(borrowValue / 1000000).toFixed(1)}M` : 
+                                borrowValue.toLocaleString();
+                            })()}
+                          </td>
+                          <td className="py-3 px-1 sm:px-2 text-xs">
                             {isNaN(pool.supplyAPY) || pool.supplyAPY === 0 ? 
                               "N/A" : `${pool.supplyAPY.toFixed(2)}%`
                             }
                           </td>
-                          <td className="py-2 px-2">
+                          <td className="py-3 px-1 sm:px-2 text-xs">
                             {isNaN(pool.borrowAPY) || pool.borrowAPY === 0 ? 
                               "N/A" : `${pool.borrowAPY.toFixed(2)}%`
                             }
                           </td>
-                          <td className="py-2 px-2">
+                          <td className="py-3 px-1 sm:px-2 text-xs hidden md:table-cell">
                             {isNaN(pool.utilizationRate) || pool.utilizationRate === 0 ? 
                               "N/A" : `${pool.utilizationRate.toFixed(1)}%`
                             }
                           </td>
-                          <td className="py-2 px-2">${pool.price.toFixed(4)}</td>
+                          <td className="py-3 px-1 sm:px-2 text-xs font-mono">
+                            ${pool.price.toFixed(4)}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2353,7 +2431,7 @@ export default function AavePage() {
         {/* Deploy Tab */}
         {activeTab === "deploy" && (
           <div className="card">
-            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Deploy Strategy</h3>
+            <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Deploy Strategy</h3>
             <p className="text-sm text-[rgb(var(--fg-secondary))] mb-4">
               Deploy your saved portfolio strategy to Aave for real DeFi exposure
             </p>
@@ -2451,7 +2529,7 @@ export default function AavePage() {
         {/* Rebalance Tab */}
         {activeTab === "rebalance" && (
           <div className="card">
-            <h3 className="text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Rebalance Portfolio</h3>
+            <h3 className="text-base sm:text-lg font-semibold text-[rgb(var(--fg-primary))] mb-4">Rebalance Portfolio</h3>
             <p className="text-sm text-[rgb(var(--fg-secondary))] mb-4">
               Rebalance your Aave positions and wallet assets to match a target portfolio allocation. This feature analyzes your current holdings and suggests actions to achieve your desired asset allocation.
             </p>
@@ -2578,7 +2656,7 @@ export default function AavePage() {
       {showCapitalConfirmation && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-[rgb(var(--bg-primary))] rounded-lg p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Insufficient Capital</h3>
+            <h3 className="text-base sm:text-lg font-semibold mb-4">Insufficient Capital</h3>
             <div className="mb-4">
               <p className="text-[rgb(var(--fg-secondary))] mb-2">
                 Your portfolio requires <strong>${requestedCapital} USDC</strong>, but you only have <strong>${availableCapital} USDC</strong>.

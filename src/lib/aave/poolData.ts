@@ -1,5 +1,5 @@
 import { Address, PublicClient, createPublicClient, http } from "viem";
-import { sepolia, arbitrumSepolia, baseSepolia } from "viem/chains";
+import { sepolia, arbitrumSepolia, baseSepolia, base } from "viem/chains";
 import { getAaveConfig } from "./config";
 import { getRpcEndpoint, isRealPoolDataEnabled, isPriceOracleEnabled } from "@/lib/config/env";
 import { getFallbackPriceByAddress } from "./priceFallback";
@@ -95,6 +95,10 @@ const CHAIN_CONFIG: Record<number, { rpc: string; name: string }> = {
     rpc: "https://sepolia.base.org",
     name: "Base Sepolia",
   },
+  [base.id]: {
+    rpc: "https://mainnet.base.org",
+    name: "Base Mainnet",
+  },
 };
 
 /**
@@ -189,7 +193,8 @@ export async function fetchAssetPrice(
     const publicClient = createPublicClient({
       chain: chainId === sepolia.id ? sepolia : 
              chainId === arbitrumSepolia.id ? arbitrumSepolia : 
-             chainId === baseSepolia.id ? baseSepolia : sepolia,
+             chainId === baseSepolia.id ? baseSepolia :
+             chainId === base.id ? base : sepolia,
       transport: http(rpcUrl, {
         timeout: 10000,
         retryCount: 3,
